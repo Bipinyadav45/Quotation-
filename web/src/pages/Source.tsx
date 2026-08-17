@@ -45,7 +45,7 @@ export default function Source({ thread, onThreadChange, onParsed }: Props) {
   const empty = thread.trim() === ''
 
   return (
-    <div className="max-w-5xl">
+    <div>
       <ScreenHeader
         step={1}
         title="Email thread"

@@ -100,7 +100,9 @@ export default function App() {
   return (
     <div className="min-h-screen">
       <header className="border-b border-rule-strong bg-paper-raised no-print">
-        <div className="flex items-baseline gap-6 px-6 py-3">
+        {/* Same container as <main>, so the title sits on the same axis as the
+            content below it rather than drifting to the window edge. */}
+        <div className="mx-auto flex max-w-6xl items-baseline gap-6 px-6 py-3">
           <h1 className="text-[15px] font-semibold tracking-tight">
             Quotation Desk
             <span className="ml-2 font-normal text-ink-faint">Newtech Computer Services</span>
@@ -140,7 +142,9 @@ export default function App() {
         </div>
       </header>
 
-      <main className="px-6 py-6">
+      {/* The app's one content column. Screens do not set their own width —
+          otherwise they disagree and the layout jumps as you move between them. */}
+      <main className="mx-auto max-w-6xl px-6 py-6">
         {screen === 'source' && (
           <Source
             thread={thread}

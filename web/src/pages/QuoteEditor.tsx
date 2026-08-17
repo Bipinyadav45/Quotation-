@@ -137,7 +137,7 @@ export default function QuoteEditor({
   }
 
   return (
-    <div className="max-w-6xl">
+    <div>
       <ScreenHeader
         step={3}
         title="Quotation"

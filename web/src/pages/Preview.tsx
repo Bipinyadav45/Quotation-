@@ -71,7 +71,7 @@ export default function Preview({ quote, onRevise, onStartNew }: Props) {
   }
 
   return (
-    <div className="max-w-5xl">
+    <div>
       <ScreenHeader
         step={4}
         title="Document"

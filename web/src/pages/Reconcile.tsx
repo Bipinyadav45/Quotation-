@@ -93,7 +93,7 @@ export default function Reconcile({ lines, pairs, onLinesChange, onBuild, onBack
   }
 
   return (
-    <div className="max-w-6xl">
+    <div>
       <ScreenHeader
         step={2}
         title="Ask vs quote"
