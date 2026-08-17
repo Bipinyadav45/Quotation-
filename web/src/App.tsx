@@ -7,17 +7,22 @@ import { taxModeForState } from '@shared/states'
 import Source from './pages/Source'
 import Reconcile from './pages/Reconcile'
 import QuoteEditor, { type EditorItem, type QuoteDraft } from './pages/QuoteEditor'
+import Stepper from './components/Stepper'
 import Preview from './pages/Preview'
 import History from './pages/History'
 
 type Screen = 'source' | 'reconcile' | 'editor' | 'document' | 'history'
 
-const STEPS: Array<{ screen: Screen; n: number; label: string; locked: string }> = [
-  { screen: 'source', n: 1, label: 'Email thread', locked: '' },
-  { screen: 'reconcile', n: 2, label: 'Ask vs quote', locked: 'Read a thread first' },
-  { screen: 'editor', n: 3, label: 'Quotation', locked: 'Build from the ask-vs-quote screen first' },
-  { screen: 'document', n: 4, label: 'Document', locked: 'Save the quotation first' },
-  { screen: 'history', n: 5, label: 'History', locked: '' },
+/**
+ * The four steps a quotation passes through. History is not among them — it is
+ * somewhere you go, not a stage you complete, and putting it in the sequence
+ * would imply a quotation is unfinished until you have visited it.
+ */
+const FLOW: Array<{ screen: Screen; label: string; locked: string }> = [
+  { screen: 'source', label: 'Email thread', locked: '' },
+  { screen: 'reconcile', label: 'Ask vs quote', locked: 'Read a thread first' },
+  { screen: 'editor', label: 'Quotation', locked: 'Build from the ask-vs-quote screen first' },
+  { screen: 'document', label: 'Document', locked: 'Save the quotation first' },
 ]
 
 const toEditorItem = (item: QuoteItem): EditorItem => ({
@@ -84,9 +89,10 @@ export default function App() {
     history: true,
   }
 
-  // How far through the flow this quotation has got, so the nav can show which
-  // steps are behind you rather than just which are clickable.
-  const doneUpTo = saved !== null ? 3 : draft !== null ? 2 : pairs.length > 0 ? 1 : 0
+  // How far through the flow this quotation has got, so the stepper can fill
+  // its track rather than only showing what happens to be clickable.
+  const progress = saved !== null ? 3 : draft !== null ? 2 : pairs.length > 0 ? 1 : 0
+  const activeStep = FLOW.findIndex((s) => s.screen === screen)
 
   function startNew() {
     setThread('')
@@ -102,43 +108,45 @@ export default function App() {
       <header className="border-b border-rule-strong bg-paper-raised no-print">
         {/* Same container as <main>, so the title sits on the same axis as the
             content below it rather than drifting to the window edge. */}
-        <div className="mx-auto flex max-w-6xl items-baseline gap-6 px-6 py-3">
-          <h1 className="text-[15px] font-semibold tracking-tight">
-            Quotation Desk
-            <span className="ml-2 font-normal text-ink-faint">Newtech Computer Services</span>
-          </h1>
-          <nav className="flex items-center gap-1 text-[13px]">
-            {STEPS.map((step, i) => {
-              const active = screen === step.screen
-              const available = reached[step.screen]
-              // A step you have been past and could go back to.
-              const done = available && !active && step.screen !== 'history' && doneUpTo > i
+        <div className="mx-auto max-w-6xl px-6">
+          <div className="flex items-baseline justify-between gap-6 pb-2 pt-3">
+            <h1 className="text-[15px] font-semibold tracking-tight">
+              Quotation Desk
+              <span className="ml-2 font-normal text-ink-faint">Newtech Computer Services</span>
+            </h1>
 
-              return (
-                <div key={step.n} className="flex items-center">
-                  {i > 0 && <span className="px-1 text-rule-strong">›</span>}
-                  <button
-                    type="button"
-                    disabled={!available}
-                    onClick={() => setScreen(step.screen)}
-                    title={available ? undefined : step.locked}
-                    className={`border px-2 py-1 ${
-                      active
-                        ? 'border-accent bg-accent-faint font-medium text-accent'
-                        : done
-                          ? 'border-transparent text-ink hover:bg-paper-sunk'
-                          : 'border-transparent text-ink-muted hover:bg-paper-sunk'
-                    } disabled:cursor-not-allowed disabled:text-ink-faint/60 disabled:hover:bg-transparent`}
-                  >
-                    <span className={`label mr-1.5 ${done ? 'text-accent' : ''}`}>
-                      {done ? '✓' : String(step.n).padStart(2, '0')}
-                    </span>
-                    {step.label}
-                  </button>
-                </div>
-              )
-            })}
-          </nav>
+            <div className="flex items-center gap-2">
+              {progress > 0 && (
+                <button type="button" className="btn px-2 py-0.5 text-[12px]" onClick={startNew}>
+                  New quotation
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setScreen('history')}
+                className={`border px-2 py-0.5 text-[12px] ${
+                  screen === 'history'
+                    ? 'border-accent bg-accent-faint text-accent'
+                    : 'border-rule bg-paper-raised hover:bg-paper-sunk'
+                }`}
+              >
+                History
+              </button>
+            </div>
+          </div>
+
+          <div className="pb-3">
+            <Stepper
+              steps={FLOW.map((step) => ({
+                label: step.label,
+                available: reached[step.screen],
+                locked: step.locked,
+              }))}
+              active={activeStep === -1 ? null : activeStep}
+              progress={progress}
+              onSelect={(i) => setScreen(FLOW[i]!.screen)}
+            />
+          </div>
         </div>
       </header>
 
