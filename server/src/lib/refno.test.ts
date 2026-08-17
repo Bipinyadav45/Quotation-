@@ -1,17 +1,22 @@
 import Database from 'better-sqlite3'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { allocateRef, formatRef, peekNextSeq } from './refno.js'
+
+const SCHEMA = `
+  CREATE TABLE IF NOT EXISTS ref_counters (
+    fy TEXT NOT NULL, initials TEXT NOT NULL, last_seq INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (fy, initials)
+  )
+`
 
 let db: Database.Database
 
 beforeEach(() => {
   db = new Database(':memory:')
-  db.exec(`
-    CREATE TABLE ref_counters (
-      fy TEXT NOT NULL, initials TEXT NOT NULL, last_seq INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (fy, initials)
-    )
-  `)
+  db.exec(SCHEMA)
 })
 
 afterEach(() => db.close())
@@ -68,6 +73,38 @@ describe('allocateRef', () => {
     }
     for (const who of Object.keys(seqs)) {
       expect(seqs[who]).toEqual(Array.from({ length: 20 }, (_, i) => i + 1))
+    }
+  })
+})
+
+describe('allocation across separate connections', () => {
+  // The in-memory tests above prove the sequence is gapless within one
+  // connection. This proves the UPSERT ... RETURNING is atomic against a real
+  // file with two connections interleaved — which is the situation a second
+  // server process, or a restart mid-save, actually creates.
+  it('never hands the same number to two connections', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'refno-'))
+    const file = path.join(dir, 'quotes.db')
+    const july = new Date(2026, 6, 10)
+
+    const a = new Database(file)
+    a.exec(SCHEMA)
+    a.pragma('journal_mode = WAL')
+    const b = new Database(file)
+    b.pragma('journal_mode = WAL')
+
+    try {
+      const taken: number[] = []
+      for (let i = 0; i < 50; i++) {
+        taken.push(allocateRef(i % 2 === 0 ? a : b, july, 'RG').seq)
+      }
+
+      expect(new Set(taken).size).toBe(50)
+      expect(taken).toEqual(Array.from({ length: 50 }, (_, i) => i + 1))
+    } finally {
+      a.close()
+      b.close()
+      rmSync(dir, { recursive: true, force: true })
     }
   })
 })

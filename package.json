@@ -16,7 +16,8 @@
     "start": "tsx server/src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "preview": "tsx server/scripts/render-preview.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",

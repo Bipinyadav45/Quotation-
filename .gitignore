@@ -9,3 +9,6 @@ Thumbs.db
 
 # LibreOffice per-conversion profile directories (see server/src/lib/pdf.ts)
 .tmp/
+
+# Milestone 5 visual check output
+.preview/
