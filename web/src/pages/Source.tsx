@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { ParsedLine, ParseResponse, ReconciledPair, ReconcileResponse } from '@shared/schema'
 import { SAMPLE_THREAD } from '@shared/sample'
-import { apiPost } from '../lib/api'
+import { apiPost, useApi } from '../lib/api'
 
 interface Props {
   thread: string
@@ -11,22 +11,31 @@ interface Props {
 
 /** Screen 1 — the email thread goes in here and nowhere else. */
 export default function Source({ thread, onThreadChange, onParsed }: Props) {
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState<'pattern' | 'llm' | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [note, setNote] = useState<string | null>(null)
 
-  async function parse() {
-    setBusy(true)
+  // §5's Claude path needs a key. Without one the button is hidden rather than
+  // offered and then failing.
+  const capabilities = useApi<{ llm: boolean }>('/api/capabilities')
+
+  async function parse(endpoint: '/api/parse' | '/api/parse/llm') {
+    setBusy(endpoint === '/api/parse' ? 'pattern' : 'llm')
     setError(null)
+    setNote(null)
     try {
-      const parsed = await apiPost<ParseResponse>('/api/parse', { thread })
+      const parsed = await apiPost<ParseResponse>(endpoint, { thread })
       const reconciled = await apiPost<ReconcileResponse>('/api/reconcile', {
         lines: parsed.lines,
       })
+      // §5 — a Claude failure comes back as the pattern result plus a note, not
+      // an error page. Carry the note through so the desk knows what happened.
+      if (parsed.note) setNote(parsed.note)
       onParsed(parsed.lines, reconciled.pairs, thread)
     } catch (err) {
       setError((err as Error).message)
     } finally {
-      setBusy(false)
+      setBusy(null)
     }
   }
 
@@ -52,16 +61,29 @@ export default function Source({ thread, onThreadChange, onParsed }: Props) {
         <button
           type="button"
           className="btn btn-primary"
-          onClick={parse}
-          disabled={busy || thread.trim() === ''}
+          onClick={() => parse('/api/parse')}
+          disabled={busy !== null || thread.trim() === ''}
         >
-          {busy ? 'Parsing…' : 'Parse thread'}
+          {busy === 'pattern' ? 'Parsing…' : 'Parse thread'}
         </button>
+
+        {capabilities.data?.llm && (
+          <button
+            type="button"
+            className="btn"
+            onClick={() => parse('/api/parse/llm')}
+            disabled={busy !== null || thread.trim() === ''}
+            title="For threads the patterns cannot handle — pasted tables, prose quotations"
+          >
+            {busy === 'llm' ? 'Asking Claude…' : 'Parse with Claude'}
+          </button>
+        )}
+
         <button
           type="button"
           className="btn"
           onClick={() => onThreadChange(SAMPLE_THREAD)}
-          disabled={busy}
+          disabled={busy !== null}
         >
           Load sample
         </button>
@@ -71,13 +93,15 @@ export default function Source({ thread, onThreadChange, onParsed }: Props) {
           onClick={() => {
             onThreadChange('')
             setError(null)
+            setNote(null)
           }}
-          disabled={busy || thread === ''}
+          disabled={busy !== null || thread === ''}
         >
           Clear
         </button>
       </div>
 
+      {note && <p className="mt-3 text-[13px] text-drift">{note}</p>}
       {error && <p className="mt-3 text-[13px] text-drift">{error}</p>}
     </div>
   )

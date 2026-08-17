@@ -6,6 +6,7 @@ import { getDb } from './db/client.js'
 import { cleanTempDir, converterStatus, warmUp } from './lib/pdf.js'
 import { parseRoutes } from './routes/parse.js'
 import { quoteRoutes } from './routes/quote.js'
+import { renderRoutes } from './routes/render.js'
 
 const app = express()
 
@@ -45,7 +46,7 @@ app.get('/api/health', (_req, res) => {
 
 app.use('/api', parseRoutes)
 app.use('/api', quoteRoutes)
-// app.use('/api', renderRoutes)  // M5
+app.use('/api', renderRoutes)
 
 // In production the built frontend is served by this same process, so there is
 // one port and one URL. In development Vite serves it on :5173 and proxies here.

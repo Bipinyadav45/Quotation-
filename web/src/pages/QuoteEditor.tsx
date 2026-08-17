@@ -27,6 +27,10 @@ export interface QuoteDraft {
   items: EditorItem[]
   tax: { mode: 'IGST' | 'CGST+SGST'; rate: number }
   terms: { payment: string; delivery: string; prices: string; validity: string }
+  /** Set when this draft is a revision of an existing quote — keeps its ref (§10). */
+  reviseOf?: string
+  /** The ref being revised, for display only. */
+  reviseOfRef?: string
 }
 
 interface Props {
@@ -108,6 +112,7 @@ export default function QuoteEditor({
         terms: draft.terms,
         sourceThread,
         reconciliation,
+        ...(draft.reviseOf ? { reviseOf: draft.reviseOf } : {}),
       })
       onSaved(quote)
     } catch (err) {
@@ -121,15 +126,23 @@ export default function QuoteEditor({
     <div className="max-w-6xl">
       <div className="mb-3 flex items-baseline justify-between">
         <h2 className="text-[15px] font-semibold">Quotation</h2>
-        <span className="label">
-          next ref{' '}
-          <span className="ref text-ink">
-            NCS/…/{draft.initials.toUpperCase()}/
-            {nextSeq === null ? '???' : String(nextSeq).padStart(3, '0')}
+        {draft.reviseOf ? (
+          <span className="label">
+            revision of <span className="ref text-ink">{draft.reviseOfRef}</span>
+            <span className="mx-1.5 text-rule-strong">·</span>
+            keeps its reference
           </span>
-          <span className="mx-1.5 text-rule-strong">·</span>
-          taken on save
-        </span>
+        ) : (
+          <span className="label">
+            next ref{' '}
+            <span className="ref text-ink">
+              NCS/…/{draft.initials.toUpperCase()}/
+              {nextSeq === null ? '???' : String(nextSeq).padStart(3, '0')}
+            </span>
+            <span className="mx-1.5 text-rule-strong">·</span>
+            taken on save
+          </span>
+        )}
       </div>
 
       {/* --- header fields --- */}

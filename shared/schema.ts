@@ -217,13 +217,25 @@ export const UpdateStatusRequestSchema = z.object({
  * than ParsedLine — `id` and `source` are assigned by us, never by the model.
  */
 export const LlmParsedLineSchema = z.object({
+  /** The source line, copied verbatim. */
   raw: z.string(),
+  /** The product, with the quantity and price removed. */
   desc: z.string(),
+  /** Brand if one is named, otherwise an empty string. */
   make: z.string(),
+  /** Part or model code if one is present, otherwise an empty string. */
   partCode: z.string(),
   qty: z.number().int().nonnegative(),
-  /** Rate in PAISE. */
-  rate: z.number().int().nonnegative(),
+  /**
+   * The unit rate exactly as written in the line ("1,250" / "550.00"), or an
+   * empty string when the line carries no price.
+   *
+   * Deliberately NOT paise: converting rupees to paise is arithmetic, and
+   * asking a language model to do arithmetic it does not need to do only
+   * creates a way for the number on a customer's quotation to be wrong. The
+   * server converts it with the same parser the deterministic path uses.
+   */
+  rateText: z.string(),
   role: RoleSchema,
 })
 export const LlmParseResultSchema = z.object({

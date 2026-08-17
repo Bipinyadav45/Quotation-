@@ -7,14 +7,29 @@ import { taxModeForState } from '@shared/states'
 import Source from './pages/Source'
 import Reconcile from './pages/Reconcile'
 import QuoteEditor, { type EditorItem, type QuoteDraft } from './pages/QuoteEditor'
+import Preview from './pages/Preview'
+import History from './pages/History'
 
-type Screen = 'source' | 'reconcile' | 'editor' | 'saved'
+type Screen = 'source' | 'reconcile' | 'editor' | 'document' | 'history'
 
 const STEPS: Array<{ screen: Screen; n: number; label: string }> = [
   { screen: 'source', n: 1, label: 'Email thread' },
   { screen: 'reconcile', n: 2, label: 'Ask vs quote' },
   { screen: 'editor', n: 3, label: 'Quotation' },
+  { screen: 'document', n: 4, label: 'Document' },
+  { screen: 'history', n: 5, label: 'History' },
 ]
+
+const toEditorItem = (item: QuoteItem): EditorItem => ({
+  key: crypto.randomUUID(),
+  desc: item.desc,
+  make: item.make,
+  partCode: item.partCode,
+  hsn: item.hsn ?? '',
+  qty: item.qty,
+  rate: item.rate,
+  rateText: formatPaise(item.rate),
+})
 
 function newDraft(items: QuoteItem[]): QuoteDraft {
   const today = new Date()
@@ -25,24 +40,31 @@ function newDraft(items: QuoteItem[]): QuoteDraft {
     contact: DEFAULT_SALESPERSON.phone,
     email: DEFAULT_SALESPERSON.email,
     signatory: DEFAULT_SALESPERSON.name,
-    items: items.map(
-      (item): EditorItem => ({
-        key: crypto.randomUUID(),
-        desc: item.desc,
-        make: item.make,
-        partCode: item.partCode,
-        hsn: item.hsn ?? '',
-        qty: item.qty,
-        rate: item.rate,
-        rateText: formatPaise(item.rate),
-      }),
-    ),
+    items: items.map(toEditorItem),
     tax: { mode: taxModeForState(undefined), rate: GST_RATE_PERCENT },
-    terms: {
-      ...DEFAULT_TERMS,
-      // §7 — validity defaults to the end of the current month.
-      validity: formatDateLong(endOfMonth(today)),
+    terms: { ...DEFAULT_TERMS, validity: formatDateLong(endOfMonth(today)) },
+  }
+}
+
+/** §10 — clone an existing quote as the basis for a revision. */
+function draftFromQuote(quote: Quote, asRevision: boolean): QuoteDraft {
+  return {
+    date: quote.date,
+    initials: DEFAULT_SALESPERSON.initials,
+    customer: {
+      name: quote.customer.name,
+      address: quote.customer.address,
+      attention: quote.customer.attention,
+      gstin: quote.customer.gstin ?? '',
+      state: quote.customer.state ?? '',
     },
+    contact: quote.contact,
+    email: quote.email,
+    signatory: quote.signatory,
+    items: quote.items.map(toEditorItem),
+    tax: quote.tax,
+    terms: quote.terms,
+    ...(asRevision ? { reviseOf: quote.id, reviseOfRef: quote.ref } : {}),
   }
 }
 
@@ -58,7 +80,17 @@ export default function App() {
     source: true,
     reconcile: pairs.length > 0,
     editor: draft !== null,
-    saved: saved !== null,
+    document: saved !== null,
+    history: true,
+  }
+
+  function startNew() {
+    setThread('')
+    setLines([])
+    setPairs([])
+    setDraft(null)
+    setSaved(null)
+    setScreen('source')
   }
 
   return (
@@ -72,12 +104,11 @@ export default function App() {
           <nav className="flex gap-1 text-[13px]">
             {STEPS.map((step) => {
               const active = screen === step.screen
-              const enabled = reached[step.screen]
               return (
                 <button
                   key={step.n}
                   type="button"
-                  disabled={!enabled}
+                  disabled={!reached[step.screen]}
                   onClick={() => setScreen(step.screen)}
                   className={`border px-2 py-1 ${
                     active
@@ -132,59 +163,38 @@ export default function App() {
             reconciliation={pairs}
             onSaved={(quote) => {
               setSaved(quote)
-              setScreen('saved')
+              setScreen('document')
             }}
-            onBack={() => setScreen('reconcile')}
+            onBack={() => setScreen(pairs.length > 0 ? 'reconcile' : 'history')}
           />
         )}
 
-        {screen === 'saved' && saved && (
-          <div className="panel max-w-2xl p-5">
-            <h2 className="mb-3 text-[15px] font-semibold">Saved</h2>
-            <table className="w-full text-[13px]">
-              <tbody>
-                <tr className="border-b border-rule">
-                  <td className="label py-2">Reference</td>
-                  <td className="ref py-2">{saved.ref}</td>
-                </tr>
-                <tr className="border-b border-rule">
-                  <td className="label py-2">Customer</td>
-                  <td className="py-2">{saved.customer.name}</td>
-                </tr>
-                <tr className="border-b border-rule">
-                  <td className="label py-2">Lines</td>
-                  <td className="py-2">{saved.items.length}</td>
-                </tr>
-                <tr>
-                  <td className="label py-2">Total</td>
-                  <td className="num py-2 text-left font-semibold">
-                    {formatPaise(saved.totals.total)}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+        {screen === 'document' && saved && (
+          <Preview
+            quote={saved}
+            onRevise={() => {
+              setDraft(draftFromQuote(saved, true))
+              setScreen('editor')
+            }}
+            onStartNew={startNew}
+          />
+        )}
 
-            <p className="mt-4 text-[13px] text-ink-muted">
-              The source thread and the full reconciliation are stored against this reference.
-            </p>
-
-            <div className="mt-4 flex gap-2">
-              <button
-                type="button"
-                className="btn"
-                onClick={() => {
-                  setThread('')
-                  setLines([])
-                  setPairs([])
-                  setDraft(null)
-                  setSaved(null)
-                  setScreen('source')
-                }}
-              >
-                Start another quotation
-              </button>
-            </div>
-          </div>
+        {screen === 'history' && (
+          <History
+            onOpen={(quote) => {
+              setSaved(quote)
+              setThread(quote.sourceThread)
+              setPairs(quote.reconciliation)
+              setScreen('document')
+            }}
+            onClone={(quote) => {
+              setThread(quote.sourceThread)
+              setPairs(quote.reconciliation)
+              setDraft(draftFromQuote(quote, true))
+              setScreen('editor')
+            }}
+          />
         )}
       </main>
     </div>
