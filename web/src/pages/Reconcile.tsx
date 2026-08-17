@@ -14,6 +14,8 @@ interface Props {
   onLinesChange: (lines: ParsedLine[], pairs: ReconciledPair[]) => void
   onBuild: (items: QuoteItem[]) => void
   onBack: () => void
+  /** The thread has been edited since this comparison was built. */
+  stale?: boolean
 }
 
 const rowKey = (pair: ReconciledPair) => `${pair.request?.id ?? '-'}|${pair.offer?.id ?? '-'}`
@@ -26,7 +28,14 @@ const rowKey = (pair: ReconciledPair) => `${pair.request?.id ?? '-'}|${pair.offe
  * here and nowhere else in the application, so its presence always means
  * "look here".
  */
-export default function Reconcile({ lines, pairs, onLinesChange, onBuild, onBack }: Props) {
+export default function Reconcile({
+  lines,
+  pairs,
+  onLinesChange,
+  onBuild,
+  onBack,
+  stale = false,
+}: Props) {
   const [reviewed, setReviewed] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -118,6 +127,13 @@ export default function Reconcile({ lines, pairs, onLinesChange, onBuild, onBack
           </div>
         }
       />
+
+      {stale && (
+        <Callout tone="problem" label="Out of date" className="mb-3">
+          The thread has been edited since this comparison was built, so what you see below may not
+          match it. Go back and read the thread again before building the quotation.
+        </Callout>
+      )}
 
       {error && (
         <Callout tone="problem" label="Problem" className="mb-3">

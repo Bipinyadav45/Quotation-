@@ -80,6 +80,16 @@ export default function App() {
   const [pairs, setPairs] = useState<ReconciledPair[]>([])
   const [draft, setDraft] = useState<QuoteDraft | null>(null)
   const [saved, setSaved] = useState<Quote | null>(null)
+  /** The exact thread text the current comparison was built from. */
+  const [parsedThread, setParsedThread] = useState('')
+
+  /**
+   * Now that the stepper lets you jump back to the thread, edit it, and jump
+   * forward again, the comparison on screen can be built from text that no
+   * longer exists. Silently showing a stale reconciliation is precisely the
+   * class of error this product exists to prevent, so say so.
+   */
+  const reconciliationStale = parsedThread !== '' && thread.trim() !== parsedThread.trim()
 
   const reached: Record<Screen, boolean> = {
     source: true,
@@ -161,6 +171,7 @@ export default function App() {
               setLines(nextLines)
               setPairs(nextPairs)
               setThread(usedThread)
+              setParsedThread(usedThread)
               setScreen('reconcile')
             }}
           />
@@ -174,6 +185,7 @@ export default function App() {
               setLines(nextLines)
               setPairs(nextPairs)
             }}
+            stale={reconciliationStale}
             onBuild={(items) => {
               setDraft(newDraft(items))
               setScreen('editor')
