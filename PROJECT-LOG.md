@@ -5,7 +5,8 @@ still open. Built to [PROMPT.md](PROMPT.md); for how to run it see
 [README.md](README.md).
 
 **Date:** 17 August 2026
-**Status:** all six milestones built. One verification step outstanding (below).
+**Status:** all six milestones built; production smoke test passes. Two items
+wait on a LibreOffice install that needs administrator rights — see §7.
 
 ---
 
@@ -241,19 +242,76 @@ pdf:   HTTP 503 — "PDF export is unavailable … The .docx download still work
 Note line 02: the *1 mtr* request paired with the *1.5 mtr USB-C* offer, not the
 USB-A one. That is Correction 4.1 doing its job.
 
+### Production smoke test — 17 August 2026, 16:05
+
+Run against a clean tree (`git status` empty), with `web/dist` and `data/`
+deleted first so the frontend was rebuilt and the database created from nothing
+by the migration runner. Vite was **not** running; `npm start` alone served
+everything.
+
+```
+1. SINGLE PROCESS SERVES THE FRONTEND
+   GET /                       200   411 bytes   text/html
+   GET /assets/index-….js       200   177,809 bytes
+   GET /history (deep link)     200   SPA fallback works
+
+2. DATABASE BUILT FROM NOTHING
+   status: degraded
+     database  ok           - 1 migration(s) applied
+     pdf       unavailable  - LibreOffice not found
+
+3. FULL FLOW THROUGH THE PRODUCTION PROCESS
+   POST /api/parse       200   10 lines, 5 requests / 5 offers
+   POST /api/reconcile   200   5 pairs
+                               flags: line 2 spec/block, line 3 brand/block
+                               § 11 expects exactly these two  -> MATCH
+   POST /api/quote       201   NCS/2026-27/Quotes/RG/001
+                               11,500.00 / 2,070.00 / 13,570.00  -> MATCH
+   POST /render/docx     200   41,302 bytes
+```
+
+`degraded` rather than `error` is the designed behaviour: the PDF converter is
+absent, which is not a fault, and the `.docx` path is unaffected.
+
+The reference restarting at `001` is correct — the database had just been
+deleted, and the counter lives in it.
+
 ---
 
 ## 7 · Open items
 
-1. **Milestone 5's visual check.** §10 asks for the output to be converted to
-   PDF and page one rasterised, to confirm the letterhead, table borders and
-   totals block render as they do in the hand-made original. LibreOffice was not
-   installed; it is being installed now. `npm run preview` renders both our
-   output and the original for side-by-side comparison. **The structural half
-   already passes** — every label and amount is reproduced, and the letterhead
-   parts are byte-identical — but only a picture proves the layout.
+1. **LibreOffice is not installed, and installing it needs an administrator.**
+   An attempt was made with
+   `winget install --id TheDocumentFoundation.LibreOffice --silent`. It
+   downloaded the 355 MB package successfully at 15:50 and then stalled: 25
+   minutes elapsed, 4.4 seconds of CPU, no install log ever written. The cause
+   is that this session is **not elevated** (`IsInRole(Administrator)` is
+   `False`) and a per-machine MSI cannot raise a UAC prompt from a
+   non-interactive session. The stalled process was cleaned up.
 
-2. **Three PDF tests are skipped** until LibreOffice is present.
+   To finish it, run **in an elevated PowerShell** (Start → Windows PowerShell →
+   Run as administrator):
+
+   ```powershell
+   winget install --id TheDocumentFoundation.LibreOffice -e --accept-package-agreements --accept-source-agreements
+   ```
+
+   Nothing in the code needs to change afterwards — the converter auto-detects
+   the usual install locations at startup, so restarting the server is enough.
+   `SOFFICE_PATH` in `.env` is the override if it lands somewhere unusual.
+
+2. **Two things are waiting on that install:**
+
+   - **Milestone 5's visual check.** §10 asks for the output to be converted to
+     PDF and page one rasterised, to confirm the letterhead, table borders and
+     totals block render as they do in the hand-made original. `npm run preview`
+     is written and ready; it renders both our output and the original into
+     `.preview/` for side-by-side comparison. **The structural half already
+     passes** — every label and amount is reproduced and the letterhead parts
+     are byte-identical — but only a picture proves the layout.
+   - **Three PDF tests skip**, including the three-simultaneous-conversions
+     test. Run `npm test` again once LibreOffice is present; they need no
+     changes.
 
 3. **Customer details are typed by hand.** PROMPT.md has no customer master, so
    the editor starts with blank customer fields. A master would be the obvious
