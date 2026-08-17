@@ -12,3 +12,6 @@ Thumbs.db
 
 # Milestone 5 visual check output
 .preview/
+
+# Word lock files (created while a .docx is open)
+~$*
