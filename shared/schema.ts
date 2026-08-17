@@ -171,6 +171,48 @@ export const ReconcileResponseSchema = z.object({
 export type ReconcileResponse = z.infer<typeof ReconcileResponseSchema>
 
 /**
+ * Saving a quote. The client never sends `ref`, `revision`, `totals` or
+ * `createdAt`: the reference is allocated server-side on save (§7) and the
+ * totals are recomputed from the items, so a stale or tampered figure in the
+ * browser can never reach a document.
+ */
+export const SaveQuoteRequestSchema = z.object({
+  /** YYYY-MM-DD */
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD'),
+  /** Drives the reference series, e.g. "RG". */
+  initials: z.string().min(1, 'Initials are needed to allocate a reference'),
+  customer: CustomerSchema,
+  contact: z.string(),
+  email: z.string(),
+  signatory: z.string(),
+  items: z.array(QuoteItemSchema).min(1, 'A quotation needs at least one line'),
+  tax: z.object({ mode: TaxModeSchema, rate: z.number().int() }),
+  terms: TermsSchema,
+  sourceThread: z.string(),
+  reconciliation: z.array(ReconciledPairSchema),
+  /** Set to clone an existing quote as the next revision, keeping its ref (§10). */
+  reviseOf: z.string().optional(),
+})
+export type SaveQuoteRequest = z.infer<typeof SaveQuoteRequestSchema>
+
+/** One row of the History table (§9 screen 5). */
+export const QuoteSummarySchema = z.object({
+  id: z.string(),
+  ref: z.string(),
+  revision: z.number().int(),
+  date: z.string(),
+  customerName: z.string(),
+  total: z.number().int(),
+  status: z.enum(['draft', 'sent', 'won', 'lost']),
+  createdAt: z.string(),
+})
+export type QuoteSummary = z.infer<typeof QuoteSummarySchema>
+
+export const UpdateStatusRequestSchema = z.object({
+  status: z.enum(['draft', 'sent', 'won', 'lost']),
+})
+
+/**
  * What the LLM fallback parser is constrained to return. Deliberately narrower
  * than ParsedLine — `id` and `source` are assigned by us, never by the model.
  */

@@ -1,4 +1,4 @@
-import type { NextFunction, Request, Response } from 'express'
+import type { NextFunction, Request, RequestHandler, Response } from 'express'
 import type { ZodTypeAny, z } from 'zod'
 
 /**
@@ -24,3 +24,16 @@ export function validateBody<S extends ZodTypeAny>(schema: S) {
     next()
   }
 }
+
+/**
+ * Reads the body a `validateBody(schema)` middleware already checked, with the
+ * schema's inferred type. Express types `req.body` loosely, so without this the
+ * validated shape is lost the moment it reaches the handler — and a `.forEach`
+ * over it silently becomes untyped.
+ */
+export function validated<S extends ZodTypeAny>(_schema: S, req: Request): z.infer<S> {
+  return req.body as z.infer<S>
+}
+
+/** Convenience alias so route files read as plain Express. */
+export type Handler = RequestHandler

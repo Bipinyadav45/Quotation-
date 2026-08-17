@@ -49,27 +49,6 @@ export const config = {
   webDist: path.resolve(ROOT, 'web', 'dist'),
 } as const
 
-/** §1 — fixed company details. These are printed, not configured per quote. */
-export const COMPANY = {
-  name: 'Newtech Computer Services Pvt. Ltd.',
-  addressLines: [
-    '6th Floor, Solaris-II, Opp L&T Gate-6,',
-    'Saki Vihar Road, Powai,',
-    'Mumbai- 400072.',
-  ],
-  tel: '022 40668888',
-  cin: 'U99999MH1984PTC034412',
-  /** §7 — Newtech is registered in Maharashtra; this drives the tax-mode default. */
-  homeState: 'Maharashtra',
-} as const
-
-/** §7 — defaults, all editable on the quote. */
-export const DEFAULT_TERMS = {
-  payment: '100% Advance',
-  delivery: '1-2 Weeks after PO',
-  prices: 'All-inclusive as per the quote',
-  /** validity defaults to the end of the current month — computed in shared/fy.ts */
-  validity: '',
-} as const
-
-export const GST_RATE_PERCENT = 18
+// §1's company details live in shared/ so the editor's defaults and the
+// document renderer read one definition.
+export { COMPANY, DEFAULT_TERMS, GST_RATE_PERCENT, SALESPEOPLE } from '@shared/company.js'

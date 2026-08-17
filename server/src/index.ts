@@ -4,6 +4,8 @@ import path from 'node:path'
 import { config } from './config.js'
 import { getDb } from './db/client.js'
 import { cleanTempDir, converterStatus, warmUp } from './lib/pdf.js'
+import { parseRoutes } from './routes/parse.js'
+import { quoteRoutes } from './routes/quote.js'
 
 const app = express()
 
@@ -41,10 +43,9 @@ app.get('/api/health', (_req, res) => {
   res.status(checks.database.ok ? 200 : 503).json({ status, checks })
 })
 
-// --- routes land here as milestones complete -------------------------------
-// app.use('/api', parseRoutes)
-// app.use('/api', quoteRoutes)
-// app.use('/api', renderRoutes)
+app.use('/api', parseRoutes)
+app.use('/api', quoteRoutes)
+// app.use('/api', renderRoutes)  // M5
 
 // In production the built frontend is served by this same process, so there is
 // one port and one URL. In development Vite serves it on :5173 and proxies here.
