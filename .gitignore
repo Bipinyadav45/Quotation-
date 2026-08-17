@@ -1,0 +1,11 @@
+node_modules/
+dist/
+data/
+.env
+.env.local
+*.log
+.DS_Store
+Thumbs.db
+
+# LibreOffice per-conversion profile directories (see server/src/lib/pdf.ts)
+.tmp/

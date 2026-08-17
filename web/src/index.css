@@ -1,0 +1,69 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    /* §9 — usable at 1280px on the desk machines. */
+    min-width: 1280px;
+  }
+
+  body {
+    @apply bg-paper text-ink font-sans text-[14px] leading-normal antialiased;
+  }
+
+  /* §9 — keyboard focus must be visible. Never remove this outline. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent ring-offset-1 ring-offset-paper;
+  }
+
+  /* §9 — monospace for reference numbers, quantities, money and field labels. */
+  .num,
+  .ref,
+  .label {
+    @apply font-mono;
+  }
+
+  .label {
+    @apply text-[11px] uppercase tracking-wider text-ink-faint;
+  }
+
+  /* Money and quantities are read in columns; they must align. */
+  .num {
+    @apply tabular-nums text-right;
+  }
+}
+
+@layer components {
+  /* §9 — dense over airy. No cards with drop shadows, no gradients, no pills. */
+  .panel {
+    @apply border border-rule bg-paper-raised;
+  }
+
+  .btn {
+    @apply border border-rule bg-paper-raised px-3 py-1.5 text-[13px]
+           hover:bg-paper-sunk active:translate-y-px disabled:opacity-40
+           disabled:pointer-events-none;
+  }
+
+  .btn-primary {
+    @apply border-accent bg-accent text-paper-raised hover:bg-accent-hover;
+  }
+
+  /* §9 — amber appears ONLY here, so its presence always means "look here". */
+  .drift-strip {
+    @apply border border-dashed border-drift-rule bg-drift-bg px-2 py-1
+           text-[12px] text-drift;
+  }
+}
+
+@media print {
+  /* §9 — the reconciliation screen must be legible when printed. */
+  body {
+    @apply bg-white text-black;
+    min-width: 0;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
