@@ -4,6 +4,8 @@ import { amountInWords, computeTotals, formatPaise, pad2, parseRupeesToPaise } f
 import { formatDateLong, fromISODate } from '@shared/fy'
 import { INDIAN_STATES, taxModeForState } from '@shared/states'
 import { apiPost } from '../lib/api'
+import Callout from '../components/Callout'
+import ScreenHeader from '../components/ScreenHeader'
 
 export interface EditorItem {
   key: string
@@ -70,6 +72,18 @@ export default function QuoteEditor({
       .catch(() => setNextSeq(null))
   }, [draft.initials, draft.date])
 
+  /** What is stopping this being saved, in words rather than a greyed-out button. */
+  const blockers = useMemo(() => {
+    const problems: string[] = []
+    if (draft.customer.name.trim() === '') problems.push('The customer needs a name')
+    if (draft.items.length === 0) problems.push('A quotation needs at least one line')
+    if (draft.items.some((i) => i.desc.trim() === '')) problems.push('Every line needs a description')
+    if (draft.initials.trim() === '') problems.push('Initials are needed to allocate a reference')
+    return problems
+  }, [draft.customer.name, draft.items, draft.initials])
+
+  const unpriced = draft.items.filter((i) => i.rate === 0).length
+
   const set = (patch: Partial<QuoteDraft>) => onDraftChange({ ...draft, ...patch })
 
   const setItem = (index: number, patch: Partial<EditorItem>) =>
@@ -124,28 +138,31 @@ export default function QuoteEditor({
 
   return (
     <div className="max-w-6xl">
-      <div className="mb-3 flex items-baseline justify-between">
-        <h2 className="text-[15px] font-semibold">Quotation</h2>
-        {draft.reviseOf ? (
-          <span className="label">
-            revision of <span className="ref text-ink">{draft.reviseOfRef}</span>
-            <span className="mx-1.5 text-rule-strong">·</span>
-            keeps its reference
-          </span>
-        ) : (
-          <span className="label">
-            next ref{' '}
-            <span className="ref text-ink">
-              NCS/…/{draft.initials.toUpperCase()}/
-              {nextSeq === null ? '???' : String(nextSeq).padStart(3, '0')}
+      <ScreenHeader
+        step={3}
+        title="Quotation"
+        purpose="Fill in who it is for, check the lines, and save. The reference number is taken at the moment you save — not before — so leaving this page costs nothing."
+        right={
+          draft.reviseOf ? (
+            <span className="label no-print">
+              revision of <span className="ref text-ink">{draft.reviseOfRef}</span>
+              <span className="mx-1.5 text-rule-strong">·</span>
+              keeps its reference
             </span>
-            <span className="mx-1.5 text-rule-strong">·</span>
-            taken on save
-          </span>
-        )}
-      </div>
+          ) : (
+            <span className="label no-print">
+              will become{' '}
+              <span className="ref text-ink">
+                NCS/…/{draft.initials.toUpperCase()}/
+                {nextSeq === null ? '???' : String(nextSeq).padStart(3, '0')}
+              </span>
+            </span>
+          )
+        }
+      />
 
       {/* --- header fields --- */}
+      <h3 className="label mb-1.5">Who it is for</h3>
       <div className="panel mb-4 grid grid-cols-3 gap-x-5 gap-y-3 p-4">
         <Field label="Date">
           <input
@@ -274,6 +291,14 @@ export default function QuoteEditor({
       </div>
 
       {/* --- items --- */}
+      <div className="mb-1.5 flex items-baseline justify-between">
+        <h3 className="label">
+          Lines <span className="ml-1 text-ink-faint">({draft.items.length})</span>
+        </h3>
+        <span className="text-[11px] text-ink-faint no-print">
+          click any cell to edit · drag a row, or use ↑ ↓, to reorder
+        </span>
+      </div>
       <div className="panel mb-4">
         <table className="w-full text-[13px]">
           <thead>
@@ -391,6 +416,7 @@ export default function QuoteEditor({
       </div>
 
       {/* --- totals + terms --- */}
+      <h3 className="label mb-1.5">Terms and totals</h3>
       <div className="mb-4 grid grid-cols-2 gap-4">
         <div className="panel p-4">
           <h3 className="label mb-2">Terms and conditions</h3>
@@ -427,22 +453,41 @@ export default function QuoteEditor({
         </div>
       </div>
 
+      {/* Say what is missing, rather than disabling the button and leaving the
+          reader to work out why. */}
+      {blockers.length > 0 && (
+        <Callout className="mb-3" label="Before saving">
+          {blockers.join(' · ')}
+        </Callout>
+      )}
+
+      {unpriced > 0 && blockers.length === 0 && (
+        <Callout className="mb-3" label="Worth checking">
+          {unpriced} {unpriced === 1 ? 'line has' : 'lines have'} no rate. That is usually a line the
+          customer asked for that we have not priced yet — it will print as 0.00.
+        </Callout>
+      )}
+
       <div className="flex items-center gap-2 no-print">
         <button type="button" className="btn" onClick={onBack}>
-          Back to reconciliation
+          Back to ask vs quote
         </button>
         <span className="grow" />
         <button
           type="button"
           className="btn btn-primary"
           onClick={save}
-          disabled={saving || draft.items.length === 0 || draft.customer.name.trim() === ''}
+          disabled={saving || blockers.length > 0}
         >
           {saving ? 'Saving…' : 'Save and take a reference'}
         </button>
       </div>
 
-      {error && <p className="mt-2 text-right text-[13px] text-drift">{error}</p>}
+      {error && (
+        <Callout tone="problem" label="Problem" className="mt-3">
+          {error}
+        </Callout>
+      )}
     </div>
   )
 }

@@ -4,6 +4,8 @@ import { COMPANY } from '@shared/company'
 import { amountInWords, computeTotals, formatPaise, pad2 } from '@shared/money'
 import { formatDateLong, fromISODate } from '@shared/fy'
 import { apiDownload, apiPost, useApi } from '../lib/api'
+import Callout from '../components/Callout'
+import ScreenHeader from '../components/ScreenHeader'
 
 interface Props {
   quote: Quote
@@ -21,7 +23,7 @@ type Health = { checks: Record<string, { ok: boolean; detail: string }> }
  */
 export default function Preview({ quote, onRevise, onStartNew }: Props) {
   const [busy, setBusy] = useState<string | null>(null)
-  const [message, setMessage] = useState<string | null>(null)
+  const [message, setMessage] = useState<{ tone: 'help' | 'problem'; text: string } | null>(null)
   const [status, setStatus] = useState(quote.status)
   const paperRef = useRef<HTMLDivElement>(null)
 
@@ -37,7 +39,7 @@ export default function Preview({ quote, onRevise, onStartNew }: Props) {
     try {
       await apiDownload(`/api/render/${kind}`, { quoteId: quote.id })
     } catch (err) {
-      setMessage((err as Error).message)
+      setMessage({ tone: 'problem', text: (err as Error).message })
     } finally {
       setBusy(null)
     }
@@ -52,25 +54,35 @@ export default function Preview({ quote, onRevise, onStartNew }: Props) {
           'text/plain': new Blob([paperRef.current?.innerText ?? ''], { type: 'text/plain' }),
         }),
       ])
-      setMessage('Copied. Paste straight into Word.')
+      setMessage({ tone: 'help', text: 'Copied. Paste straight into Word.' })
     } catch {
-      setMessage('Could not reach the clipboard — use Download .docx instead.')
+      setMessage({
+        tone: 'problem',
+        text: 'Could not reach the clipboard — use Download Word instead.',
+      })
     }
   }
 
   async function setQuoteStatus(next: Quote['status']) {
     setStatus(next)
     await apiPost(`/api/quotes/${quote.id}/status`, { status: next }).catch(() => {
-      setMessage('Could not save that status.')
+      setMessage({ tone: 'problem', text: 'Could not save that status.' })
     })
   }
 
   return (
     <div className="max-w-5xl">
-      <div className="mb-3 flex items-baseline justify-between no-print">
-        <h2 className="text-[15px] font-semibold">Document</h2>
-        <span className="ref text-[13px]">{quote.ref}{quote.revision > 0 && ` (Rev ${quote.revision})`}</span>
-      </div>
+      <ScreenHeader
+        step={4}
+        title="Document"
+        purpose="Saved. This is what the customer will see — download it as Word to edit before sending, or as PDF to send as-is."
+        right={
+          <span className="ref text-[13px] no-print">
+            {quote.ref}
+            {quote.revision > 0 && ` (Rev ${quote.revision})`}
+          </span>
+        }
+      />
 
       {/* The on-screen render. Serif, cream, sized to A4 proportions. */}
       <div ref={paperRef} className="panel mx-auto max-w-[820px] p-10 font-serif text-[13.5px] leading-relaxed">
@@ -200,8 +212,9 @@ export default function Preview({ quote, onRevise, onStartNew }: Props) {
           className="btn btn-primary"
           onClick={() => download('docx')}
           disabled={busy !== null}
+          title="The editable Word file, on the letterhead"
         >
-          {busy === 'docx' ? 'Building…' : 'Download .docx'}
+          {busy === 'docx' ? 'Building…' : 'Download Word'}
         </button>
 
         <button
@@ -209,13 +222,23 @@ export default function Preview({ quote, onRevise, onStartNew }: Props) {
           className="btn"
           onClick={() => download('pdf')}
           disabled={busy !== null || !pdfReady}
-          title={pdfReady ? 'Converted from the same .docx' : pdfDetail}
+          title={
+            pdfReady
+              ? 'Converted from the very same Word file, so the two cannot disagree'
+              : pdfDetail
+          }
         >
           {busy === 'pdf' ? 'Converting…' : 'Download PDF'}
         </button>
 
-        <button type="button" className="btn" onClick={copyForWord} disabled={busy !== null}>
-          Copy for Word
+        <button
+          type="button"
+          className="btn"
+          onClick={copyForWord}
+          disabled={busy !== null}
+          title="Puts it on the clipboard to paste into an email or an open document"
+        >
+          Copy
         </button>
 
         <span className="grow" />
@@ -241,12 +264,21 @@ export default function Preview({ quote, onRevise, onStartNew }: Props) {
       </div>
 
       {!pdfReady && health.data && (
-        <p className="mt-2 text-[12px] text-ink-muted no-print">
-          PDF export is off: {pdfDetail} The .docx download is unaffected.
-        </p>
+        <Callout className="mt-3 no-print" label="PDF is off">
+          {pdfDetail} The Word download is unaffected — open it and save as PDF from there in the
+          meantime.
+        </Callout>
       )}
 
-      {message && <p className="mt-2 text-[13px] text-drift no-print">{message}</p>}
+      {message && (
+        <Callout
+          tone={message.tone}
+          label={message.tone === 'problem' ? 'Problem' : undefined}
+          className="mt-3 no-print"
+        >
+          {message.text}
+        </Callout>
+      )}
     </div>
   )
 }

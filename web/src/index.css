@@ -55,6 +55,23 @@
     @apply border border-dashed border-drift-rule bg-drift-bg px-2 py-1
            text-[12px] text-drift;
   }
+
+  /* The exact words that differ between what was asked and what we are quoting.
+     Same amber, same meaning — just located precisely instead of described. */
+  .diff-changed {
+    @apply bg-drift-bg font-semibold text-drift;
+    box-shadow: inset 0 -2px 0 theme('colors.drift.rule');
+  }
+
+  /* A row carrying at least one flag. The stripe is what makes the screen
+     scannable without reading it. */
+  .row-flagged {
+    @apply border-l-2 border-l-drift bg-drift-bg/25;
+  }
+
+  .row-clean {
+    @apply border-l-2 border-l-transparent;
+  }
 }
 
 @media print {

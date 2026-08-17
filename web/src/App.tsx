@@ -12,12 +12,12 @@ import History from './pages/History'
 
 type Screen = 'source' | 'reconcile' | 'editor' | 'document' | 'history'
 
-const STEPS: Array<{ screen: Screen; n: number; label: string }> = [
-  { screen: 'source', n: 1, label: 'Email thread' },
-  { screen: 'reconcile', n: 2, label: 'Ask vs quote' },
-  { screen: 'editor', n: 3, label: 'Quotation' },
-  { screen: 'document', n: 4, label: 'Document' },
-  { screen: 'history', n: 5, label: 'History' },
+const STEPS: Array<{ screen: Screen; n: number; label: string; locked: string }> = [
+  { screen: 'source', n: 1, label: 'Email thread', locked: '' },
+  { screen: 'reconcile', n: 2, label: 'Ask vs quote', locked: 'Read a thread first' },
+  { screen: 'editor', n: 3, label: 'Quotation', locked: 'Build from the ask-vs-quote screen first' },
+  { screen: 'document', n: 4, label: 'Document', locked: 'Save the quotation first' },
+  { screen: 'history', n: 5, label: 'History', locked: '' },
 ]
 
 const toEditorItem = (item: QuoteItem): EditorItem => ({
@@ -84,6 +84,10 @@ export default function App() {
     history: true,
   }
 
+  // How far through the flow this quotation has got, so the nav can show which
+  // steps are behind you rather than just which are clickable.
+  const doneUpTo = saved !== null ? 3 : draft !== null ? 2 : pairs.length > 0 ? 1 : 0
+
   function startNew() {
     setThread('')
     setLines([])
@@ -101,24 +105,35 @@ export default function App() {
             Quotation Desk
             <span className="ml-2 font-normal text-ink-faint">Newtech Computer Services</span>
           </h1>
-          <nav className="flex gap-1 text-[13px]">
-            {STEPS.map((step) => {
+          <nav className="flex items-center gap-1 text-[13px]">
+            {STEPS.map((step, i) => {
               const active = screen === step.screen
+              const available = reached[step.screen]
+              // A step you have been past and could go back to.
+              const done = available && !active && step.screen !== 'history' && doneUpTo > i
+
               return (
-                <button
-                  key={step.n}
-                  type="button"
-                  disabled={!reached[step.screen]}
-                  onClick={() => setScreen(step.screen)}
-                  className={`border px-2 py-1 ${
-                    active
-                      ? 'border-accent bg-accent-faint text-accent'
-                      : 'border-transparent text-ink-muted hover:bg-paper-sunk'
-                  } disabled:opacity-35 disabled:hover:bg-transparent`}
-                >
-                  <span className="label mr-1.5">{String(step.n).padStart(2, '0')}</span>
-                  {step.label}
-                </button>
+                <div key={step.n} className="flex items-center">
+                  {i > 0 && <span className="px-1 text-rule-strong">›</span>}
+                  <button
+                    type="button"
+                    disabled={!available}
+                    onClick={() => setScreen(step.screen)}
+                    title={available ? undefined : step.locked}
+                    className={`border px-2 py-1 ${
+                      active
+                        ? 'border-accent bg-accent-faint font-medium text-accent'
+                        : done
+                          ? 'border-transparent text-ink hover:bg-paper-sunk'
+                          : 'border-transparent text-ink-muted hover:bg-paper-sunk'
+                    } disabled:cursor-not-allowed disabled:text-ink-faint/60 disabled:hover:bg-transparent`}
+                  >
+                    <span className={`label mr-1.5 ${done ? 'text-accent' : ''}`}>
+                      {done ? '✓' : String(step.n).padStart(2, '0')}
+                    </span>
+                    {step.label}
+                  </button>
+                </div>
               )
             })}
           </nav>

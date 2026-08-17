@@ -16,6 +16,12 @@ export default {
         // If you are reaching for `drift-*` and you are not rendering a Flag,
         // you are about to break the one rule that makes this screen scannable.
         drift: { DEFAULT: '#9A5B0B', bg: '#FBF1DF', rule: '#DEBC85' },
+
+        // A system failure — a download that would not build, a server that did
+        // not answer. Deliberately NOT amber: a broken button and "the customer
+        // asked for something else" are different problems, and if they shared a
+        // colour, amber would stop meaning the second one.
+        alert: { DEFAULT: '#8C2F1E', bg: '#F9EDEA', rule: '#D9A79B' },
       },
       fontFamily: {
         // §9 — no SaaS-landing-page aesthetics. Institutional, legible, dense.

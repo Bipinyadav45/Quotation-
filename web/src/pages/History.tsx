@@ -3,6 +3,8 @@ import type { Quote, QuoteSummary } from '@shared/schema'
 import { formatPaise } from '@shared/money'
 import { formatDateLong, fromISODate } from '@shared/fy'
 import { apiDownload, apiGet, useApi } from '../lib/api'
+import Callout from '../components/Callout'
+import ScreenHeader from '../components/ScreenHeader'
 
 interface Props {
   onOpen: (quote: Quote) => void
@@ -32,20 +34,28 @@ export default function History({ onOpen, onClone }: Props) {
 
   return (
     <div className="max-w-6xl">
-      <div className="mb-3 flex items-baseline justify-between">
-        <h2 className="text-[15px] font-semibold">History</h2>
-        <button type="button" className="btn no-print" onClick={reload}>
-          Refresh
-        </button>
-      </div>
+      <ScreenHeader
+        step={5}
+        title="History"
+        purpose="Every quotation ever sent, with the original email thread and the reconciliation stored against it — so a disputed line six weeks later has an answer."
+        right={
+          <button type="button" className="btn px-2 py-0.5 text-[12px] no-print" onClick={reload}>
+            Refresh
+          </button>
+        }
+      />
 
       {loading && <p className="text-[13px] text-ink-muted">Loading…</p>}
-      {error && <p className="text-[13px] text-drift">{error.message}</p>}
+      {error && (
+        <Callout tone="problem" label="Problem">
+          {error.message}
+        </Callout>
+      )}
 
       {data && data.quotes.length === 0 && (
-        <p className="panel p-6 text-[13px] text-ink-muted">
-          Nothing saved yet. Quotations appear here the moment they take a reference.
-        </p>
+        <Callout>
+          Nothing saved yet. A quotation appears here the moment it takes a reference number.
+        </Callout>
       )}
 
       {data && data.quotes.length > 0 && (
@@ -96,9 +106,10 @@ export default function History({ onOpen, onClone }: Props) {
                       type="button"
                       className="btn px-2 py-0.5 text-[12px]"
                       disabled={busy !== null}
+                      title="Download the Word file again"
                       onClick={() => apiDownload('/api/render/docx', { quoteId: q.id })}
                     >
-                      .docx
+                      Word
                     </button>
                   </div>
                 </td>
