@@ -82,7 +82,7 @@ export default function Stepper({ steps, active, progress, onSelect }: Props) {
                 className={[
                   'grid h-5 w-5 shrink-0 place-items-center rounded-full border-2 text-[10px] leading-none transition-colors',
                   isCurrent
-                    ? 'border-accent bg-accent text-paper-raised ring-4 ring-accent-faint'
+                    ? 'border-accent bg-accent text-paper-raised ring-2 ring-accent/35 ring-offset-2 ring-offset-paper-raised'
                     : isDone
                       ? 'border-accent bg-accent text-paper-raised group-hover:bg-accent-hover'
                       : reachable
@@ -93,16 +93,23 @@ export default function Stepper({ steps, active, progress, onSelect }: Props) {
                 {isDone ? '✓' : ''}
               </span>
 
+              {/* The label carries the "you are here" marker.
+                  A completed step and the current one both show a tick, so the
+                  circle alone cannot tell them apart — and the ring that used to
+                  do it was accent-faint on a cream ground, which is to say
+                  invisible. Every label reserves the same 2px underline and only
+                  the current one colours it in, so nothing shifts as you move
+                  between steps. */}
               <span
                 className={[
-                  'max-w-full truncate text-[10px] uppercase tracking-wider transition-colors',
+                  'max-w-full truncate border-b-2 pb-0.5 text-[10px] uppercase tracking-wider transition-colors',
                   isCurrent
-                    ? 'font-semibold text-accent'
+                    ? 'border-accent font-semibold text-accent'
                     : isDone
-                      ? 'text-ink-muted group-hover:text-accent'
+                      ? 'border-transparent text-ink-muted group-hover:border-rule-strong group-hover:text-accent'
                       : reachable
-                        ? 'text-ink-faint group-hover:text-accent'
-                        : 'text-ink-faint/60',
+                        ? 'border-transparent text-ink-faint group-hover:border-rule-strong group-hover:text-accent'
+                        : 'border-transparent text-ink-faint/60',
                 ].join(' ')}
               >
                 {step.label}
