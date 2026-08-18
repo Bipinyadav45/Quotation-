@@ -12,11 +12,11 @@ import type { Quote } from '@shared/schema.js'
  * clicking Download PDF never sees it; three people clicking at once do. These
  * tests are the reason server/src/lib/pdf.ts is a queue rather than a function.
  *
- * Skipped when LibreOffice is not installed — the .docx path does not depend on
+ * Skipped when no converter is installed — the .docx path does not depend on
  * it, and a machine without it should not have a red suite.
  */
 
-const hasLibreOffice = config.sofficePath !== null
+const hasConverter = config.pdfBackend !== null
 
 const QUOTE: Quote = {
   id: 'pdf-test',
@@ -52,17 +52,17 @@ describe('PDF converter', () => {
     expect(['ready', 'unavailable', 'error']).toContain(status)
     expect(detail.length).toBeGreaterThan(0)
     // An absent LibreOffice is `unavailable`, never `error` — nothing is broken.
-    if (!hasLibreOffice) expect(status).toBe('unavailable')
+    if (!hasConverter) expect(status).toBe('unavailable')
   })
 
-  it.runIf(hasLibreOffice)('converts a rendered quotation to a real PDF', { timeout: 180_000 }, async () => {
+  it.runIf(hasConverter)('converts a rendered quotation to a real PDF', { timeout: 180_000 }, async () => {
     await warmUp()
     const pdf = await docxToPdf(renderDocx(QUOTE))
     expect(isPdf(pdf)).toBe(true)
     expect(pdf.length).toBeGreaterThan(5_000)
   })
 
-  it.runIf(hasLibreOffice)(
+  it.runIf(hasConverter)(
     'survives three simultaneous conversions — the case that breaks an unsupervised soffice',
     { timeout: 300_000 },
     async () => {
@@ -79,7 +79,7 @@ describe('PDF converter', () => {
     },
   )
 
-  it.runIf(hasLibreOffice)(
+  it.runIf(hasConverter)(
     'stays usable after a bad input — one failure must not wedge the queue',
     { timeout: 180_000 },
     async () => {

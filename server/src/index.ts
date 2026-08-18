@@ -73,11 +73,14 @@ function boot(): void {
   app.listen(config.port, () => {
     console.log(`[server] http://localhost:${config.port}`)
     console.log(`[server] database ${config.dbPath}`)
-    if (!config.sofficePath) {
+    if (config.pdfBackend) {
+      console.log(`[server] PDF backend: ${config.pdfBackend}`)
+    } else {
       console.warn(
-        '[server] LibreOffice not found — PDF export is disabled, .docx export is unaffected.\n' +
-          '         Install with: winget install --id TheDocumentFoundation.LibreOffice\n' +
-          '         Or set SOFFICE_PATH in .env',
+        '[server] No PDF converter found — PDF export is disabled, .docx export is unaffected.\n' +
+          '         Install LibreOffice: winget install --id TheDocumentFoundation.LibreOffice\n' +
+          '         Or Microsoft Word, which this will use automatically.\n' +
+          '         Or set SOFFICE_PATH / WINWORD_PATH in .env',
       )
     }
   })

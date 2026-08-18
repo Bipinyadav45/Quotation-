@@ -4,9 +4,10 @@ A record of what was built, what the real data turned out to say, and what is
 still open. Built to [PROMPT.md](PROMPT.md); for how to run it see
 [README.md](README.md).
 
-**Date:** 17 August 2026
-**Status:** all six milestones built; production smoke test passes. Two items
-wait on a LibreOffice install that needs administrator rights — see §7.
+**Date:** 17–18 August 2026
+**Status:** all six milestones built and verified. 122 tests pass, none skipped.
+Milestone 5's visual check is done and the document matches the original on one
+page. PDF export works.
 
 ---
 
@@ -151,6 +152,21 @@ the original text position exactly.
 `header1.xml`, `footer1.xml`, `styles.xml` and the logo image are copied through
 **byte-identical**, asserted by a test.
 
+**Two things the first rebuild got wrong, both caught only by rendering it:**
+
+- **It ran to two pages.** Eight blank paragraphs against the original's four,
+  and two of them sat between the company name and the signatory, pushing
+  "Rakhi Gupte" onto page 2. Trimmed to match the original's spacing.
+- **It was in the wrong typeface.** The builder hard-coded Arial, taken from a
+  scan of every font *referenced* anywhere in the package. The body does not use
+  it: 158 of the original's 166 text-bearing runs carry no `w:rFonts` at all and
+  inherit Times New Roman from `docDefaults`; the remaining 8 name Times New
+  Roman explicitly. **Zero use Arial.** The builder now names no font, exactly
+  as those 158 runs do, so it inherits from the styles we copy across.
+
+Neither was visible in the text-extraction tests, which is precisely why §10
+asks for the page to be rendered and looked at.
+
 ### Smaller items
 
 - **Model.** §2 specifies `claude-sonnet-4-6`. Still valid, but a generation
@@ -206,7 +222,22 @@ is missing.
 
 ## 6 · Verification evidence
 
-**114 tests across 10 files** — 111 passing, 3 skipped pending LibreOffice.
+**122 tests across 11 files — all passing, none skipped.**
+
+### Milestone 5 visual check — 18 August 2026
+
+`npm run preview` renders §11's quotation through the rebuilt template, converts
+both it and the hand-made original to PDF, and rasterises page one of each.
+
+| Check | Result |
+|---|---|
+| One page | ✓ — was 2, fixed |
+| Logo / "Ref:" spacing | ✓ same gap as the original |
+| Footer / signatory spacing | ✓ signatory clear of the rule |
+| Left-edge alignment | ✓ "Dear Sir," lines up |
+| Description-column wrapping | ✓ line 04 wraps to 3 lines against the original's 2 — expected, the Make column took that width |
+| Typeface | ✓ Times New Roman, after the Arial defect above |
+
 
 | File | Tests | Covers |
 |---|---|---|
@@ -218,8 +249,9 @@ is missing.
 | `server/src/lib/refno.test.ts` | 9 | FY rollover on 1 April, gapless series, two-connection allocation |
 | `shared/fy.test.ts` | 7 | FY boundaries, ordinal date format |
 | `server/src/lib/assign.test.ts` | 6 | Hungarian vs brute force, 300 random matrices |
-| `server/src/lib/pdf.test.ts` | 4 | Three simultaneous conversions *(3 skipped)* |
+| `server/src/lib/pdf.test.ts` | 4 | Three simultaneous conversions, and a bad input not wedging the queue |
 | `web/bundle-safety.test.ts` | 3 | Greps the **built** `web/dist` for the API key |
+| `web/src/lib/diff.test.ts` | 8 | The word-level diff that marks where a line drifted |
 
 ### Verified end to end against §11
 
@@ -280,38 +312,28 @@ deleted, and the counter lives in it.
 
 ## 7 · Open items
 
-1. **LibreOffice is not installed, and installing it needs an administrator.**
-   An attempt was made with
-   `winget install --id TheDocumentFoundation.LibreOffice --silent`. It
-   downloaded the 355 MB package successfully at 15:50 and then stalled: 25
-   minutes elapsed, 4.4 seconds of CPU, no install log ever written. The cause
-   is that this session is **not elevated** (`IsInRole(Administrator)` is
-   `False`) and a per-machine MSI cannot raise a UAC prompt from a
-   non-interactive session. The stalled process was cleaned up.
+1. ~~LibreOffice~~ **Resolved — PDF export works via Microsoft Word.**
 
-   To finish it, run **in an elevated PowerShell** (Start → Windows PowerShell →
-   Run as administrator):
+   Installing LibreOffice could not be completed: `winget` downloaded the 355 MB
+   package but stalled for 25 minutes with no install log, because the session
+   was **not elevated** and a per-machine MSI cannot raise a UAC prompt
+   non-interactively.
 
-   ```powershell
-   winget install --id TheDocumentFoundation.LibreOffice -e --accept-package-agreements --accept-source-agreements
-   ```
+   Rather than wait on an administrator, a second backend was added. Word was
+   already on the machine, it renders a Word document with Word, and driving it
+   over COM needs no elevation. LibreOffice remains the preferred backend when
+   present — it is headless, does not tie up the user's Word, and is the only
+   option on a Linux server — so installing it later changes nothing but the
+   line in `/api/health`.
 
-   Nothing in the code needs to change afterwards — the converter auto-detects
-   the usual install locations at startup, so restarting the server is enough.
-   `SOFFICE_PATH` in `.env` is the override if it lands somewhere unusual.
+   Both backends run behind the same queue, timeout, retry and
+   output-verification.
 
-2. **Two things are waiting on that install:**
-
-   - **Milestone 5's visual check.** §10 asks for the output to be converted to
-     PDF and page one rasterised, to confirm the letterhead, table borders and
-     totals block render as they do in the hand-made original. `npm run preview`
-     is written and ready; it renders both our output and the original into
-     `.preview/` for side-by-side comparison. **The structural half already
-     passes** — every label and amount is reproduced and the letterhead parts
-     are byte-identical — but only a picture proves the layout.
-   - **Three PDF tests skip**, including the three-simultaneous-conversions
-     test. Run `npm test` again once LibreOffice is present; they need no
-     changes.
+2. **Milestone 5's visual check is done, and it found two real defects** — both
+   invisible to the text-extraction tests. See §4.4: the document ran to two
+   pages, and it rendered in Arial instead of the letterhead's Times New Roman.
+   Both fixed; `.preview/ours.png` now matches `.preview/original.png` on one
+   page. Re-run any time with `npm run preview`.
 
 3. **Customer details are typed by hand.** PROMPT.md has no customer master, so
    the editor starts with blank customer fields. A master would be the obvious

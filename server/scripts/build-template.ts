@@ -16,7 +16,7 @@
  *
  *   word/header1.xml   the logo            byte-identical
  *   word/footer1.xml   address + CIN rule  byte-identical
- *   word/styles.xml    Arial 12pt          byte-identical
+ *   word/styles.xml    12pt Times New Roman byte-identical
  *   word/media/*       the logo image      byte-identical
  *   w:sectPr           page size, header/footer references
  *
@@ -61,11 +61,23 @@ const ITEM_COLS = [562, 3874, 1200, 1276, 851, 1701]
 const esc = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
-/** Arial 12pt — the letterhead's face. docDefaults is Times, so be explicit. */
+/**
+ * 12pt in the letterhead's own face.
+ *
+ * Deliberately specifies NO font. Of the 166 text-bearing runs in the original,
+ * 158 carry no `w:rFonts` at all and 8 name Times New Roman; none use anything
+ * else. So the faithful thing is to inherit from `docDefaults` in styles.xml —
+ * which is Times New Roman, and which we copy across byte-identical. Naming a
+ * face here would also mean this file silently disagreeing with the letterhead
+ * the day someone restyles it.
+ *
+ * (An earlier version hard-coded Arial, read off a scan of every font
+ * *referenced* anywhere in the package rather than the fonts the body actually
+ * uses. It rendered the whole quotation in the wrong face.)
+ */
 function rPr(opts: { bold?: boolean; italic?: boolean } = {}): string {
   return (
     '<w:rPr>' +
-    '<w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:cs="Arial"/>' +
     (opts.bold ? '<w:b/><w:bCs/>' : '') +
     (opts.italic ? '<w:i/>' : '') +
     '<w:sz w:val="24"/><w:szCs w:val="24"/>' +
@@ -170,18 +182,17 @@ function buildBody(sectPr: string): string {
     number, number, number, number, number, number,
   ]
 
-  const addressBlock = tbl(
-    HEADER_COLS,
-    [
-      tr(tc(c1, 'Ref: {ref}') + tc(c2, 'Date: {dateLong}')),
-      tr(
-        tc(c1, 'To:\n{customerName}\n{customerAddress}') +
-          tc(c2, 'From:\nNewtech Computer Services Pvt. Ltd.\n6th Floor, Solaris-II, Opp L&T Gate-6,\nSaki Vihar Road, Powai,\nMumbai- 400072.'),
-      ),
-      tr(tc(c1, 'Contact Number: {contact}') + tc(c2, 'Email: {email}')),
-      tr(tc(c1 + c2, 'Kind Attention: {attention}', { span: 2 })),
-    ],
-  )
+  const addressBlock = tbl(HEADER_COLS, [
+    // The original stacks Ref above Date in one full-width cell rather than
+    // setting them side by side.
+    tr(tc(c1 + c2, 'Ref: {ref}\nDate: {dateLong}', { span: 2, bold: true })),
+    tr(
+      tc(c1, 'To:\n{customerName}\n{customerAddress}') +
+        tc(c2, 'From:\nNewtech Computer Services Pvt. Ltd.\n6th Floor, Solaris-II, Opp L&T Gate-6,\nSaki Vihar Road, Powai,\nMumbai- 400072.'),
+    ),
+    tr(tc(c1, 'Contact Number: {contact}') + tc(c2, 'Email: {email}')),
+    tr(tc(c1 + c2, 'Kind Attention: {attention}', { span: 2, bold: true, align: 'center' })),
+  ])
 
   const itemsTable = tbl(ITEM_COLS, [
     // Header row.
@@ -224,16 +235,18 @@ function buildBody(sectPr: string): string {
   // Tab stops for the terms block, so the colons line up as they do today.
   const TERM_TABS = [BODY_INDENT_LEFT + 2200, BODY_INDENT_LEFT + 2400]
 
+  // Blank paragraphs are the whole reason this ran to two pages on the first
+  // attempt: there were eight, against roughly four in the original, and the
+  // two before the signatory pushed the name onto page 2. The original is
+  // tight, so this is too — and the closing block matches its layout: left
+  // aligned and bold, with the signatory hard against the company name.
   const parts = [
     addressBlock,
     p(),
     p('Dear Sir,'),
     p('Please find the following Quotation for your kind consideration: -'),
-    p(),
     p('Quotation', { bold: true, align: 'center' }),
-    p(),
     itemsTable,
-    p(),
     p('Amount in words: {amountWords}', { italic: true }),
     p(),
     p('Terms and Conditions:', { bold: true }),
@@ -245,11 +258,10 @@ function buildBody(sectPr: string): string {
     p('If you have any queries, please call us at 40668812/88.'),
     p('Looking forward to an encouraging and early response.'),
     p(),
-    p('\tThanking You,', { tabs: [BODY_INDENT_LEFT + 3600] }),
-    p('\tYours Truly,', { tabs: [BODY_INDENT_LEFT + 3600] }),
-    p('For Newtech Computer Services Pvt., Ltd.'),
+    p('Thanking You,'),
     p(),
-    p(),
+    p('Yours Truly,', { bold: true }),
+    p('For Newtech Computer Services Pvt., Ltd.', { bold: true }),
     p('{signatory}', { bold: true }),
   ]
 

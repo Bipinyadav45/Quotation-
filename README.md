@@ -34,18 +34,27 @@ npm start                 # http://localhost:4000
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run build:template` | Regenerates `server/templates/quotation-template.docx` from the letterhead |
 
-## PDF export needs LibreOffice
+## PDF export
 
-LibreOffice converts the generated `.docx` to PDF. **It is not installed on this machine**, so
-PDF export is currently off: `/api/health` reports `degraded`, the Download PDF button is
-disabled with the reason, and the PDF endpoint returns a clear 503. **The `.docx` download is
-unaffected.** To turn PDF on:
+The PDF is produced by converting the generated `.docx` — not by rendering the quotation a
+second way — so the Word file and the PDF cannot disagree with each other. Two converters are
+supported and whichever is present is detected at startup:
 
-```powershell
-winget install --id TheDocumentFoundation.LibreOffice
-```
+| Backend | Notes |
+|---|---|
+| **LibreOffice** | Headless, cross-platform, no Office needed. Preferred when present, and the only option on a Linux server. |
+| **Microsoft Word** | Windows only, needs Office — but it renders a Word document with Word, and needs no administrator rights to set up. |
 
-Then restart the server, or set `SOFFICE_PATH` in `.env` if it installed somewhere unusual.
+`/api/health` reports which one is in use. If neither is installed, PDF export switches itself
+off cleanly: health reports `degraded`, the Download PDF button is disabled with the reason, and
+the endpoint returns a 503 — **the `.docx` download is unaffected.**
+
+Force one with `PDF_BACKEND=libreoffice|word` in `.env`, or point at an unusual install with
+`SOFFICE_PATH` / `WINWORD_PATH`.
+
+> Word is driven over COM. Microsoft advise against Office automation on a *server*; for a
+> five-person desktop tool it is fine, and every conversion is serialised through one queue
+> (see below) rather than run concurrently.
 
 ## Layout
 
@@ -71,9 +80,16 @@ customer's system rejects.
 meaning.
 
 **PDF conversion is serialised on purpose.** Concurrent `soffice` invocations that share a user
-profile directory collide — the second exits 0 having written nothing. `server/src/lib/pdf.ts`
-runs one at a time with an isolated profile per call, and verifies the output file exists
-because the exit code does not prove it.
+profile directory collide — the second exits 0 having written nothing. Word automation is
+likewise not built for concurrent use. `server/src/lib/pdf.ts` runs one at a time with an
+isolated profile per call, and verifies the output file exists because the exit code does not
+prove it. There is a test that fires three conversions at once.
+
+**Never name a font in the template builder.** The letterhead's body inherits Times New Roman
+from `docDefaults`, and 158 of the original's 166 text runs specify no font at all. Hard-coding
+a face silently re-styles the whole quotation the day someone restyles the letterhead — and an
+earlier version did exactly that, rendering it in Arial. Run `npm run preview` after any change
+to `server/scripts/build-template.ts`.
 
 ## Where this departs from PROMPT.md
 

@@ -8,20 +8,23 @@
  * borders and the totals block all render as they do in the hand-made
  * original."
  *
- * Renders §11's quotation through the rebuilt template, converts it to PDF,
- * rasterises page one, and does the same to the quotation Newtech actually
- * sent — so the two can be put side by side. A text diff proves the content
- * survived Correction 1; only a picture proves the layout did.
+ * Renders §11's quotation through the rebuilt template and converts it to PDF,
+ * then does the same to the quotation Newtech actually sent, so the two can be
+ * put side by side. A text diff proves the content survived Correction 1; only
+ * a picture proves the layout did.
+ *
+ * Conversion goes through the shared converter, so it works on whichever
+ * backend the machine has — LibreOffice or Word.
  *
  * Everything lands in .preview/ (gitignored).
  */
 
-import { spawnSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import type { Quote } from '@shared/schema.js'
 import { ROOT, config } from '../src/config.js'
 import { renderDocx } from '../src/lib/docx.js'
+import { cleanTempDir, converterStatus, docxToPdf } from '../src/lib/pdf.js'
 
 const OUT = path.resolve(ROOT, '.preview')
 const SAMPLE = path.resolve(
@@ -77,73 +80,74 @@ const QUOTE: Quote = {
   createdAt: '2026-07-10T00:00:00.000Z',
 }
 
-function toFileUrl(dir: string): string {
-  return `file:///${dir.replace(/\\/g, '/').replace(/^\/+/, '')}`
-}
-
-function convert(soffice: string, input: string, target: string, outDir: string): void {
-  const profile = path.join(outDir, `.profile-${path.basename(input)}-${target.split(':')[0]}`)
-  mkdirSync(profile, { recursive: true })
-
-  const result = spawnSync(
-    soffice,
-    [
-      `-env:UserInstallation=${toFileUrl(profile)}`,
-      '--headless',
-      '--norestore',
-      '--invisible',
-      '--nolockcheck',
-      '--nodefault',
-      '--convert-to',
-      target,
-      '--outdir',
-      outDir,
-      input,
-    ],
-    { encoding: 'utf8', timeout: 120_000 },
-  )
-
-  if (result.error) throw result.error
-  if (result.status !== 0) {
-    throw new Error(`soffice exited ${result.status}: ${result.stderr || result.stdout}`)
-  }
-  rmSync(profile, { recursive: true, force: true })
-}
-
-function main(): void {
-  const soffice = config.sofficePath
-  if (!soffice) {
-    console.error('LibreOffice not found. Install it, or set SOFFICE_PATH in .env.')
+async function main(): Promise<void> {
+  if (!config.pdfBackend) {
+    console.error(`No PDF converter available. ${converterStatus().detail}`)
     process.exit(1)
   }
 
   rmSync(OUT, { recursive: true, force: true })
   mkdirSync(OUT, { recursive: true })
+  cleanTempDir()
 
-  // Ours: render through the rebuilt template.
-  const oursDocx = path.join(OUT, 'ours.docx')
-  writeFileSync(oursDocx, renderDocx(QUOTE))
+  console.log(`converter: ${converterStatus().detail}\n`)
 
-  // Theirs: the hand-made original, copied under a simple name so LibreOffice
-  // does not have to cope with the spaces and ampersand in the real filename.
-  const theirsDocx = path.join(OUT, 'original.docx')
+  // Ours: rendered through the rebuilt template.
+  const oursDocx = renderDocx(QUOTE)
+  writeFileSync(path.join(OUT, 'ours.docx'), oursDocx)
+  console.log('converting ours.docx …')
+  writeFileSync(path.join(OUT, 'ours.pdf'), await docxToPdf(oursDocx))
+
+  // Theirs: the hand-made original, untouched.
   if (!existsSync(SAMPLE)) throw new Error(`Reference quotation missing: ${SAMPLE}`)
-  copyFileSync(SAMPLE, theirsDocx)
+  copyFileSync(SAMPLE, path.join(OUT, 'original.docx'))
+  console.log('converting original.docx …')
+  writeFileSync(path.join(OUT, 'original.pdf'), await docxToPdf(readFileSync(SAMPLE)))
 
-  // A4 at 150dpi — legible without being enormous.
-  const PNG =
-    'png:writer_png_Export:{"PixelWidth":{"type":"long","value":1240},' +
-    '"PixelHeight":{"type":"long","value":1754}}'
-
-  for (const file of [oursDocx, theirsDocx]) {
-    console.log(`converting ${path.basename(file)} …`)
-    convert(soffice, file, 'pdf', OUT)
-    convert(soffice, file, PNG, OUT)
-  }
+  // Rasterise page one of each, so the layout can actually be looked at.
+  // Done in-process with pdfjs rather than shelling out to poppler or
+  // LibreOffice, so `npm run preview` works on any machine that can already
+  // produce the PDF.
+  console.log('\nrasterising page 1 …')
+  await rasterise(path.join(OUT, 'ours.pdf'), path.join(OUT, 'ours.png'))
+  await rasterise(path.join(OUT, 'original.pdf'), path.join(OUT, 'original.png'))
 
   console.log('\nwrote:')
   for (const f of readdirSync(OUT).sort()) console.log(`  .preview/${f}`)
   console.log('\nCompare .preview/ours.png against .preview/original.png.')
 }
 
-main()
+/** First page of a PDF to a PNG, at roughly 110 dpi. */
+async function rasterise(pdfPath: string, pngPath: string): Promise<void> {
+  const { createCanvas } = await import('@napi-rs/canvas')
+  // The legacy build is the one that runs outside a browser.
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
+
+  const doc = await pdfjs.getDocument({
+    data: new Uint8Array(readFileSync(pdfPath)),
+    // No system fonts to hunt for; the PDF embeds what it needs.
+    disableFontFace: true,
+  }).promise
+
+  const page = await doc.getPage(1)
+  const viewport = page.getViewport({ scale: 1.5 })
+  const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height))
+  const context = canvas.getContext('2d')
+
+  // PDF pages are transparent; without this the text renders onto black.
+  context.fillStyle = '#ffffff'
+  context.fillRect(0, 0, canvas.width, canvas.height)
+
+  await page.render({
+    canvasContext: context as unknown as CanvasRenderingContext2D,
+    viewport,
+  }).promise
+
+  writeFileSync(pngPath, canvas.toBuffer('image/png'))
+  console.log(`  ${path.basename(pngPath)}  ${canvas.width}x${canvas.height}  (${doc.numPages} page${doc.numPages === 1 ? '' : 's'})`)
+}
+
+main().catch((err) => {
+  console.error(err)
+  process.exit(1)
+})
