@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { SAMPLE_THREAD } from '@shared/sample.js'
-import { extractPartCode, firstLength, parseThread, splitBlocks } from './parser.js'
+import {
+  extractPartCode,
+  firstLength,
+  parseThread,
+  parseThreadDetailed,
+  splitBlocks,
+} from './parser.js'
 
 const lines = parseThread(SAMPLE_THREAD)
 const requests = lines.filter((l) => l.role === 'request')
@@ -278,5 +284,160 @@ describe('a quantity on its own line, and a unit stuck to the digits', () => {
     )
     expect(out).toHaveLength(1)
     expect(out[0]!.qty).toBe(0)
+  })
+})
+
+
+/**
+ * A second real thread, this one an incoming RFQ. It breaks three more of §5's
+ * assumptions:
+ *
+ *   1. "4 nos desktop" — the quantity carries no "Qty" keyword at all, just a
+ *      number and a counting unit.
+ *   2. the product comes AFTER the quantity, where §5 takes the description
+ *      from the text BEFORE it. Read §5's way, this line describes "Pls quote".
+ *   3. "Quote tft separately" asks for a product with neither a quantity nor a
+ *      price, so §5 does not consider it a candidate line at all — and a
+ *      product the customer asked for silently vanishes.
+ *
+ * The signature block is included verbatim, image link and all, because none of
+ * it may come through as a product.
+ */
+const RFQ_THREAD = [
+  'On Thu, Jul 9, 2026 at 7:42 AM Alex Abraham <alex.abraham@datamatics.com> wrote:',
+  '',
+  '',
+  'Pls quote 4 nos desktop with 16 gb ram 512 ssd win 11 prof',
+  '',
+  'Quote tft separately',
+  '',
+  '',
+  '[https://www.datamatics.com/hubfs/e-mail-Signature%201.jpg]<https://www.youtube.com/watch?v=WmeaxfRikIY>',
+  '',
+  '--',
+  '-- ',
+  'Please call/email in case of any queries.',
+  '',
+  'Thanks & Regards,',
+  '',
+  'Newtech Computer Services Pvt. Ltd.',
+  'Rakhi Gupte',
+  'Tel  : +91 22 40668888',
+  'DID : +91 22 40668809',
+  'Cell : +91 9870450278',
+].join('\n')
+
+describe('an incoming RFQ with no Qty keyword and no prices', () => {
+  const parsed = parseThread(RFQ_THREAD)
+
+  it('finds exactly the two products asked for, and nothing from the signature', () => {
+    expect(parsed).toHaveLength(2)
+  })
+
+  it('reads "4 nos" as a quantity even with no Qty keyword', () => {
+    expect(parsed[0]!.qty).toBe(4)
+  })
+
+  it('takes the product from AFTER the quantity when the text before it is only an instruction', () => {
+    expect(parsed[0]!.desc).toBe('desktop with 16 gb ram 512 ssd win 11 prof')
+  })
+
+  it('keeps a product that was asked for with no quantity and no price', () => {
+    expect(parsed[1]!.desc).toBe('tft')
+    expect(parsed[1]!.qty).toBe(0)
+  })
+
+  it('treats both as the customer asking, not as us quoting', () => {
+    expect(parsed.every((l) => l.role === 'request')).toBe(true)
+    expect(parsed.every((l) => l.rate === 0)).toBe(true)
+  })
+
+  it('never turns the signature, the phone numbers or the image link into a product', () => {
+    const descriptions = parsed.map((l) => l.desc.toLowerCase()).join(' | ')
+    for (const fragment of [
+      'datamatics.com',
+      'youtube',
+      'signature',
+      'newtech computer services',
+      'rakhi',
+      '40668888',
+      '9870450278',
+      'queries',
+    ]) {
+      expect(descriptions, `"${fragment}" leaked into a product description`).not.toContain(
+        fragment,
+      )
+    }
+  })
+})
+
+describe('counting units, and instructions that are not products', () => {
+  const parse1 = (line: string) =>
+    parseThread(['On Thu, Jul 9, 2026 at 7:42 AM a <a@x.com> wrote:', line].join('\n'))
+
+  it('reads the counting units that appear in real mail', () => {
+    expect(parse1('Pls quote 4 nos desktop')[0]?.qty).toBe(4)
+    expect(parse1('Pls quote 2 pcs monitor')[0]?.qty).toBe(2)
+    expect(parse1('Pls quote 10 units keyboard')[0]?.qty).toBe(10)
+    expect(parse1('Pls quote 1 no. docking station')[0]?.qty).toBe(1)
+  })
+
+  it('does not mistake a specification for a quantity', () => {
+    // "16 gb", "512 ssd" and "win 11" must not be read as counts.
+    expect(parse1('Pls quote 4 nos desktop with 16 gb ram 512 ssd win 11 prof')[0]?.qty).toBe(4)
+  })
+
+  it('does not invent a product out of ordinary prose', () => {
+    expect(parse1('Please find details below -')).toHaveLength(0)
+    expect(parse1('Price valid for 2 days / till stocks last.')).toHaveLength(0)
+    expect(parse1('Awaiting your revert on the below.')).toHaveLength(0)
+    expect(parse1('Newtech Computer Services Pvt. Ltd.')).toHaveLength(0)
+  })
+
+  it('still reads §5 lines where the description comes first', () => {
+    const line = parse1('Black i USB-C to USB-A 1.5 mtr, Qty- 02 - Rs. 550 + gst each')[0]
+    expect(line?.desc).toBe('Black i USB-C to USB-A 1.5 mtr')
+    expect(line?.qty).toBe(2)
+  })
+})
+
+describe('what the parser could not read is reported, never dropped', () => {
+  it('names the lines that produced no product', () => {
+    const { lines, skipped } = parseThreadDetailed(
+      [
+        'On Thu, Jul 9, 2026 at 7:42 AM a <a@x.com> wrote:',
+        'Widget - Rs. 100 each, Qty- 02',
+        'Also we may need the mounting bracket for it',
+        'Awaiting your revert.',
+      ].join('\n'),
+    )
+    expect(lines).toHaveLength(1)
+    expect(skipped).toEqual([
+      'Also we may need the mounting bracket for it',
+      'Awaiting your revert.',
+    ])
+  })
+
+  it('does not report signature noise, or the report is useless', () => {
+    const { skipped } = parseThreadDetailed(RFQ_THREAD)
+    const joined = skipped.join(' | ')
+    for (const noise of [
+      'https://',
+      '--',
+      '+91 22 40668888',
+      '9870450278',
+      // Everything below the sign-off is signature. A warning that is entirely
+      // false is one the desk learns to scroll past.
+      'Newtech Computer Services',
+      'Rakhi Gupte',
+    ]) {
+      expect(joined, `"${noise}" should not be reported`).not.toContain(noise)
+    }
+    expect(skipped).toEqual([])
+  })
+
+  it('reports nothing when every line was understood', () => {
+    const { skipped } = parseThreadDetailed(SAMPLE_THREAD)
+    expect(skipped).toEqual([])
   })
 })

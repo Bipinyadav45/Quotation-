@@ -8,7 +8,12 @@ import ScreenHeader from '../components/ScreenHeader'
 interface Props {
   thread: string
   onThreadChange: (thread: string) => void
-  onParsed: (lines: ParsedLine[], pairs: ReconciledPair[], thread: string) => void
+  onParsed: (
+    lines: ParsedLine[],
+    pairs: ReconciledPair[],
+    thread: string,
+    skipped: string[],
+  ) => void
 }
 
 /** Screen 1 — the email thread goes in here and nowhere else. */
@@ -33,7 +38,7 @@ export default function Source({ thread, onThreadChange, onParsed }: Props) {
       // §5 — a Claude failure comes back as the pattern result plus a note, not
       // an error page. Carry the note through so the desk knows what happened.
       if (parsed.note) setNote(parsed.note)
-      onParsed(parsed.lines, reconciled.pairs, thread)
+      onParsed(parsed.lines, reconciled.pairs, thread, parsed.skipped ?? [])
     } catch (err) {
       setError((err as Error).message)
     } finally {

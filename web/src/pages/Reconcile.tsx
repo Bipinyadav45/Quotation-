@@ -16,6 +16,8 @@ interface Props {
   onBack: () => void
   /** The thread has been edited since this comparison was built. */
   stale?: boolean
+  /** Lines with content that the parser could not turn into a product. */
+  skipped?: string[]
 }
 
 const rowKey = (pair: ReconciledPair) => `${pair.request?.id ?? '-'}|${pair.offer?.id ?? '-'}`
@@ -35,6 +37,7 @@ export default function Reconcile({
   onBuild,
   onBack,
   stale = false,
+  skipped = [],
 }: Props) {
   const [reviewed, setReviewed] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState(false)
@@ -139,6 +142,23 @@ export default function Reconcile({
         <Callout tone="problem" label="Problem" className="mb-3">
           {error}
         </Callout>
+      )}
+
+      {skipped.length > 0 && (
+        <details className="mb-3 border border-drift-rule bg-drift-bg text-[12.5px] text-drift no-print">
+          <summary className="cursor-pointer px-3 py-2">
+            <span className="label mr-2 text-drift">not read</span>
+            {skipped.length} line{skipped.length === 1 ? '' : 's'} in the thread produced no
+            product. Open this and check none of them was something the customer asked for.
+          </summary>
+          <ul className="border-t border-dashed border-drift-rule px-3 py-2">
+            {skipped.map((line, i) => (
+              <li key={i} className="truncate py-0.5 font-mono text-[12px]">
+                {line}
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
 
       {pairs.length === 0 && (

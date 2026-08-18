@@ -23,6 +23,23 @@ import { findMake } from './makes.js'
  * "Quantity" is also accepted alongside "Qty"; both appear in the desk's mail.
  */
 const QTY_RE = /\b(?:qty|quantity)\s*[-–:.]?\s*(?:nos?\.?\s*[-–:]?\s*)?(\d{1,4})(?!\d)/i
+
+/**
+ * The other way a quantity arrives: a bare number and a counting unit, with no
+ * "Qty" anywhere — "Pls quote 4 nos desktop", "2 pcs monitor".
+ *
+ * The unit is required. Without it "16 gb ram", "512 ssd" and "win 11 prof"
+ * would all read as quantities, and a specification would silently become a
+ * count on a customer's quotation.
+ */
+const QTY_UNIT_RE = /\b(\d{1,4})\s*(?:nos?|pcs?|pieces?|units?|sets?)\b\.?/i
+
+/**
+ * What "Qty- 04nos." leaves behind once the quantity is matched: "nos.". A unit
+ * remnant is not a product, so it has to be stripped before deciding whether
+ * there is a description after the quantity at all.
+ */
+const LEADING_UNIT_RE = /^\s*(?:nos?|pcs?|pieces?|units?|sets?)\b\.?[\s.,:;-]*/i
 const RATE_RE = /(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?)/i
 const LENGTH_RE = /(\d+(?:\.\d+)?)\s*(?:mtr|mtrs|meter|metre|m)\b/gi
 const CODE_RE = /\b#?([A-Z]{2,}[-–]?[A-Z0-9]{3,})\b/g
@@ -38,6 +55,15 @@ const CODE_EXCLUSIONS = new Set(['USB', 'TYPE', 'GST', 'INR'])
  */
 const SKIP_RE =
   /^(thanks|regards|dear|hi\b|on\s|from:|sent:|to:|cc:|subject:|tel|did|cell|please call|sent from my|get outlook|mailto:|disclaimer|confidential|this email|best\b|br\b|--)/i
+
+/**
+ * A sign-off. Everything after one, within the same block, is signature — the
+ * company name, the sender's name, the phone list. Those lines are not read as
+ * products and never should be, so they must not be reported as "not read"
+ * either: a warning that is entirely false is a warning the desk learns to
+ * scroll past, and then the one line that mattered scrolls past with it.
+ */
+const SIGNOFF_RE = /^(?:thanks|thank you|regards|best regards|warm regards|br\b|--|__)/i
 
 const ON_HEADER_RE = /^\s*On\s+.+?\bwrote:\s*$/i
 const FROM_HEADER_RE = /^\s*From:\s*(.+)$/i
@@ -103,6 +129,41 @@ function cleanDescription(text: string): string {
 }
 
 /**
+ * "Pls quote", "Kindly send", "We need" — the words an RFQ opens with. §5 takes
+ * the description from the text BEFORE the quantity, which on a line like
+ * "Pls quote 4 nos desktop..." describes the instruction rather than the
+ * product. When the text before the quantity is only a preamble, the product is
+ * whatever follows it.
+ */
+const PREAMBLE_RE =
+  /^(?:we|i)?\s*(?:pls|plz|please|kindly)?\s*(?:quote|quotation|send|share|provide|need|require|want|arrange)\b[\s:,-]*$/i
+
+/**
+ * A line that asks for a product but names neither a quantity nor a price —
+ * "Quote tft separately". §5 does not treat it as a candidate at all, so a
+ * product the customer asked for silently vanished. Only an explicit quoting
+ * verb counts: "Please find details below" must not become a product called
+ * "find details below".
+ */
+const BARE_REQUEST_RE = /^(?:pls|plz|please|kindly)?\s*(?:quotation for|quotation|quote)\b[\s:,-]*(.+)$/i
+
+/** Instructions that trail a product name: "tft separately", "monitor also". */
+const TRAILING_INSTRUCTION_RE =
+  /[\s,]*\b(?:separately|seperately|also|as well|too|please|pls|asap|urgently)\b[\s.,!]*$/i
+
+/** "tft separately" -> "tft". The adverb is an instruction, not the product. */
+function stripTrailingInstruction(text: string): string {
+  let out = text
+  // Repeat: "monitor also please" carries two.
+  for (let i = 0; i < 3; i++) {
+    const next = out.replace(TRAILING_INSTRUCTION_RE, '').trim()
+    if (next === out) break
+    out = next
+  }
+  return cleanDescription(out)
+}
+
+/**
  * Does this line read like a continuation of the product above it?
  *
  * Deliberately narrow. A false positive prints a closing remark inside a
@@ -135,13 +196,47 @@ function appendSpecification(item: ParsedLine, raw: string): void {
   if (item.make === '') item.make = findMake(item.raw)
 }
 
+/**
+ * Lines that are noise by construction and must never be reported as "not
+ * read": a signature, a link, a divider. Reporting them would bury the one
+ * line that actually matters under a wall of footer.
+ */
+function isObviousNoise(text: string): boolean {
+  if (text.length < 3) return false || text.length === 0
+  if (/^\[?<?https?:\/\//i.test(text)) return true
+  if (/^\[(?:cid|image):/i.test(text)) return true
+  if (/^[^A-Za-z0-9]+$/.test(text)) return true // "--", "___", ">>>"
+  if (/^\+?\d[\d\s()+-]{6,}$/.test(text)) return true // a bare phone number
+  if (/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$/.test(text)) return true // a bare address
+  return false
+}
+
 export interface ParseOptions {
   internalDomain?: string
 }
 
+export interface ParseResult {
+  lines: ParsedLine[]
+  /**
+   * Lines with real content that produced no product.
+   *
+   * The parser silently discarding what it does not understand is how a missed
+   * quantity and a missed product both reached a customer-facing screen. These
+   * are surfaced so a human sees what the parser could not read, instead of
+   * finding out from the customer.
+   */
+  skipped: string[]
+}
+
+/** §5's parser. Returns products only; see parseThreadDetailed for what it could not read. */
 export function parseThread(thread: string, options: ParseOptions = {}): ParsedLine[] {
+  return parseThreadDetailed(thread, options).lines
+}
+
+export function parseThreadDetailed(thread: string, options: ParseOptions = {}): ParseResult {
   const internalDomain = (options.internalDomain ?? config.internalEmailDomain).toLowerCase()
   const lines: ParsedLine[] = []
+  const skipped: string[] = []
   let counter = 0
 
   for (const block of splitBlocks(thread)) {
@@ -156,9 +251,12 @@ export function parseThread(thread: string, options: ParseOptions = {}): ParsedL
      */
     let lastItem: ParsedLine | null = null
     let adjacent = false
+    let inSignature = false
 
     for (const rawLine of block.lines) {
       const raw = rawLine.trim()
+      if (SIGNOFF_RE.test(raw)) inSignature = true
+
       if (raw === '' || SKIP_RE.test(raw)) {
         // A blank or a signature ends a specification, but not the product —
         // the quantity often sits a blank line below it.
@@ -166,7 +264,9 @@ export function parseThread(thread: string, options: ParseOptions = {}): ParsedL
         continue
       }
 
-      const qtyMatch = QTY_RE.exec(raw)
+      // Either "Qty- 04" or a bare "4 nos". The keyword form wins when both are
+      // present, since it is the explicit one.
+      const qtyMatch = QTY_RE.exec(raw) ?? QTY_UNIT_RE.exec(raw)
       const rateMatch = RATE_RE.exec(raw)
 
       // §5 — "a line is a candidate item line if it contains a quantity OR a price".
@@ -177,9 +277,37 @@ export function parseThread(thread: string, options: ParseOptions = {}): ParsedL
         // remark would end up printed as part of the product.
         if (adjacent && lastItem && looksLikeSpecification(raw)) {
           appendSpecification(lastItem, raw)
-        } else {
-          adjacent = false
+          continue
         }
+
+        // "Quote tft separately" — a product asked for with neither quantity
+        // nor price. §5 discards it, which loses a line the customer asked for.
+        const asked = BARE_REQUEST_RE.exec(raw)?.[1]
+        const askedFor = asked ? stripTrailingInstruction(cleanDescription(asked)) : ''
+        if (askedFor === '') {
+          // Nothing matched. Rather than drop it without trace, keep it so the
+          // reconcile screen can show what went unread.
+          if (!inSignature && !isObviousNoise(raw)) skipped.push(raw)
+          adjacent = false
+          continue
+        }
+
+        counter += 1
+        const requested: ParsedLine = {
+          id: `line-${counter}`,
+          raw,
+          desc: askedFor,
+          make: findMake(raw),
+          partCode: extractPartCode(raw),
+          qty: 0,
+          rate: 0,
+          role: 'request',
+          source: 'pattern',
+          ...(senderKnown && senderIsInternal ? { roleUncertain: true } : {}),
+        }
+        lines.push(requested)
+        lastItem = requested
+        adjacent = true
         continue
       }
 
@@ -189,7 +317,22 @@ export function parseThread(thread: string, options: ParseOptions = {}): ParsedL
       // §5 — "Description = the text before the Qty match". When a line carries
       // only a price, fall back to the text before the rate.
       const cutAt = qtyMatch?.index ?? rateMatch?.index ?? raw.length
-      const desc = cleanDescription(raw.slice(0, cutAt))
+      let desc = cleanDescription(raw.slice(0, cutAt))
+
+      // ...but when the text before the quantity is only an instruction —
+      // "Pls quote 4 nos desktop with 16 gb ram" — the product is what follows
+      // it, and §5's rule would describe the instruction instead.
+      //
+      // The unit remnant has to come off first. Without that, "Qty- 04nos."
+      // reads as a product called "nos." rather than a quantity belonging to
+      // the line above it.
+      if (qtyMatch && (desc === '' || PREAMBLE_RE.test(desc))) {
+        const after = cleanDescription(
+          raw.slice(qtyMatch.index + qtyMatch[0].length).replace(LEADING_UNIT_RE, ''),
+        )
+        if (after !== '') desc = stripTrailingInstruction(after)
+        else desc = ''
+      }
 
       if (desc === '') {
         // A quantity on its own, e.g. "Qty- 04nos." under the product it
@@ -232,7 +375,7 @@ export function parseThread(thread: string, options: ParseOptions = {}): ParsedL
     }
   }
 
-  return dedupeWithinRole(lines)
+  return { lines: dedupeWithinRole(lines), skipped }
 }
 
 /**

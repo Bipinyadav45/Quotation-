@@ -82,6 +82,8 @@ export default function App() {
   const [saved, setSaved] = useState<Quote | null>(null)
   /** The exact thread text the current comparison was built from. */
   const [parsedThread, setParsedThread] = useState('')
+  /** Lines the parser could not read as products — shown, never dropped. */
+  const [skipped, setSkipped] = useState<string[]>([])
 
   /**
    * Now that the stepper lets you jump back to the thread, edit it, and jump
@@ -108,6 +110,7 @@ export default function App() {
     setThread('')
     setLines([])
     setPairs([])
+    setSkipped([])
     setDraft(null)
     setSaved(null)
     setScreen('source')
@@ -167,11 +170,12 @@ export default function App() {
           <Source
             thread={thread}
             onThreadChange={setThread}
-            onParsed={(nextLines, nextPairs, usedThread) => {
+            onParsed={(nextLines, nextPairs, usedThread, notRead) => {
               setLines(nextLines)
               setPairs(nextPairs)
               setThread(usedThread)
               setParsedThread(usedThread)
+              setSkipped(notRead)
               setScreen('reconcile')
             }}
           />
@@ -186,6 +190,7 @@ export default function App() {
               setPairs(nextPairs)
             }}
             stale={reconciliationStale}
+            skipped={skipped}
             onBuild={(items) => {
               setDraft(newDraft(items))
               setScreen('editor')

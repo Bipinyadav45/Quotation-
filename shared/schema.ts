@@ -155,6 +155,12 @@ export type ParseRequest = z.infer<typeof ParseRequestSchema>
 export const ParseResponseSchema = z.object({
   lines: z.array(ParsedLineSchema),
   source: LineSourceSchema,
+  /**
+   * Lines with content that produced no product. Surfaced rather than dropped:
+   * a parser that silently discards what it cannot read is how a missed
+   * quantity reaches a customer.
+   */
+  skipped: z.array(z.string()).default([]),
   /** Set when the LLM parse failed and we fell back to the pattern parser (§5). */
   note: z.string().optional(),
 })

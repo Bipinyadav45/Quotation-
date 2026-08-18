@@ -6,7 +6,7 @@ import {
   type ReconcileResponse,
 } from '@shared/schema.js'
 import { validateBody, validated } from '../middleware/validate.js'
-import { parseThread } from '../lib/parser.js'
+import { parseThreadDetailed } from '../lib/parser.js'
 import { parseThreadWithClaude } from '../lib/llmParser.js'
 import { reconcile } from '../lib/reconcile.js'
 import { config } from '../config.js'
@@ -20,7 +20,8 @@ export const parseRoutes = Router()
  */
 parseRoutes.post('/parse', validateBody(ParseRequestSchema), (req, res) => {
   const { thread } = validated(ParseRequestSchema, req)
-  const body: ParseResponse = { lines: parseThread(thread), source: 'pattern' }
+  const { lines, skipped } = parseThreadDetailed(thread)
+  const body: ParseResponse = { lines, source: 'pattern', skipped }
   res.json(body)
 })
 

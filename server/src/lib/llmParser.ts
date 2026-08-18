@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { LlmParseResultSchema, type ParsedLine, type ParseResponse } from '@shared/schema.js'
 import { parseRupeesToPaise } from '@shared/money.js'
 import { config } from '../config.js'
-import { parseThread } from './parser.js'
+import { parseThreadDetailed } from './parser.js'
 import { findMake } from './makes.js'
 
 /**
@@ -97,11 +97,10 @@ copies of a line you have already returned. Copy values; do not compute them,
 convert currencies, or tidy up spelling in "raw".`
 
 export async function parseThreadWithClaude(thread: string): Promise<ParseResponse> {
-  const fallback = (note: string): ParseResponse => ({
-    lines: parseThread(thread),
-    source: 'pattern',
-    note,
-  })
+  const fallback = (note: string): ParseResponse => {
+    const { lines, skipped } = parseThreadDetailed(thread)
+    return { lines, source: 'pattern', note, skipped }
+  }
 
   if (!config.anthropicApiKey) {
     return fallback('ANTHROPIC_API_KEY is not set, so the pattern parser was used instead.')
@@ -158,7 +157,7 @@ export async function parseThreadWithClaude(thread: string): Promise<ParseRespon
       }
     })
 
-    return { lines, source: 'llm' }
+    return { lines, source: 'llm', skipped: [] }
   } catch (err) {
     // §5 — "on validation failure, return the pattern-parser result with a note
     // rather than an error page." The same applies to a network blip, a rate
