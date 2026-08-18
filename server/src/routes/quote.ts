@@ -196,6 +196,41 @@ quoteRoutes.post('/quotes/:id/status', validateBody(UpdateStatusRequestSchema), 
   res.json({ ok: true })
 })
 
+/**
+ * Delete one quotation, and only that one.
+ *
+ * A revision is its own row sharing a reference with its siblings, so deleting
+ * "Rev 2" leaves the original and Rev 1 and Rev 3 alone. Line items go with it
+ * through ON DELETE CASCADE — which is why `foreign_keys` is switched on per
+ * connection in db/client.ts; without that pragma SQLite would silently orphan
+ * them.
+ *
+ * The reference number is deliberately NOT released. `ref_counters` only ever
+ * moves forward, so a deleted NCS/2026-27/Quotes/RG/006 cannot be handed out
+ * again to a different customer — two quotations sharing a reference is a far
+ * worse problem than a gap in the sequence.
+ */
+quoteRoutes.delete('/quotes/:id', (req, res) => {
+  const db = getDb()
+
+  const existing = db
+    .prepare('SELECT ref, revision, status FROM quotes WHERE id = ?')
+    .get(req.params.id) as { ref: string; revision: number; status: string } | undefined
+
+  if (!existing) {
+    res.status(404).json({ error: `No quote with id ${req.params.id}` })
+    return
+  }
+
+  db.prepare('DELETE FROM quotes WHERE id = ?').run(req.params.id)
+
+  console.log(
+    `[quotes] deleted ${existing.ref}${existing.revision > 0 ? ` Rev ${existing.revision}` : ''} (was ${existing.status})`,
+  )
+
+  res.json({ ok: true, ref: existing.ref, revision: existing.revision })
+})
+
 /** Shared by the routes above and by document rendering (M5). */
 export function loadQuote(id: string): Quote | null {
   const db = getDb()

@@ -11,8 +11,12 @@ let db: Database.Database | null = null
  * migrations, and returns the connection. Safe to call repeatedly.
  *
  * WAL mode lets readers run while a write is in flight, which is what makes a
- * single file fine for the whole purchase desk. `foreign_keys` is off by default
- * in SQLite and has to be turned on per connection.
+ * single file fine for the whole purchase desk.
+ *
+ * `foreign_keys` is set explicitly even though better-sqlite3 already turns it
+ * on — SQLite's own default is OFF, so the line is what keeps ON DELETE CASCADE
+ * working if the driver is ever swapped, and it states the dependency out loud.
+ * See db/cascade.test.ts.
  */
 export function getDb(): Database.Database {
   if (db) return db

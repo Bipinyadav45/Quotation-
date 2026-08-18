@@ -39,6 +39,8 @@ export const apiGet = <T,>(path: string) => request<T>(path)
 export const apiPost = <T,>(path: string, body: unknown) =>
   request<T>(path, { method: 'POST', body: JSON.stringify(body) })
 
+export const apiDelete = <T,>(path: string) => request<T>(path, { method: 'DELETE' })
+
 /** Download a binary response (a .docx or .pdf) and hand it to the browser. */
 export async function apiDownload(path: string, body: unknown): Promise<void> {
   const res = await fetch(path, {
