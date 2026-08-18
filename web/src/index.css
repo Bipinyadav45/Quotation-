@@ -63,6 +63,30 @@
     box-shadow: inset 0 -2px 0 theme('colors.drift.rule');
   }
 
+  /* --- editable vs calculated -------------------------------------------
+     One convention across the whole quotation screen:
+       raised + boxed  = you type here
+       recessed + bare = the system works it out
+     Before this, the item cells were transparent and bordered only on hover,
+     so a description you could edit and an amount you could not looked
+     identical. */
+
+  .field {
+    @apply w-full border border-rule bg-paper-raised px-2 py-1 text-[13px]
+           focus:border-accent focus:bg-white;
+  }
+
+  /* Same thing, tighter, for cells inside the line-items table. */
+  .field-cell {
+    @apply w-full border border-rule bg-paper-raised px-1.5 py-1 text-[13px]
+           focus:border-accent focus:bg-white;
+  }
+
+  /* A value the system fills in. Never focusable, never boxed. */
+  .calc {
+    @apply bg-paper-sunk text-ink-muted;
+  }
+
   /* A row carrying at least one flag. The stripe is what makes the screen
      scannable without reading it. */
   .row-flagged {

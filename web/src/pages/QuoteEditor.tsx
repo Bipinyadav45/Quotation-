@@ -161,6 +161,19 @@ export default function QuoteEditor({
         }
       />
 
+      {/* Says the convention once, rather than leaving it to be discovered by
+          clicking things to see which ones respond. */}
+      <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] text-ink-muted no-print">
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-3.5 w-7 border border-rule bg-paper-raised" />
+          you can type here
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="calc inline-block h-3.5 w-7" />
+          worked out for you — not editable
+        </span>
+      </div>
+
       {/* --- header fields --- */}
       <h3 className="label mb-1.5">Who it is for</h3>
       <div className="panel mb-4 grid grid-cols-3 gap-x-5 gap-y-3 p-4">
@@ -296,7 +309,7 @@ export default function QuoteEditor({
           Lines <span className="ml-1 text-ink-faint">({draft.items.length})</span>
         </h3>
         <span className="text-[11px] text-ink-faint no-print">
-          click any cell to edit · drag a row, or use ↑ ↓, to reorder
+          boxed cells are editable · drag a row, or use ↑ ↓, to reorder
         </span>
       </div>
       <div className="panel mb-4">
@@ -309,7 +322,12 @@ export default function QuoteEditor({
               <th className="label w-28 px-2 py-2">Part code</th>
               <th className="label w-28 px-2 py-2 text-right">Rate</th>
               <th className="label w-16 px-2 py-2 text-right">Qty</th>
-              <th className="label w-28 px-2 py-2 text-right">Amount</th>
+              <th className="label w-28 px-2 py-2 text-right">
+                Amount
+                <span className="ml-1 font-normal normal-case tracking-normal text-ink-faint">
+                  (calculated)
+                </span>
+              </th>
               <th className="w-20 px-2 py-2 no-print" />
             </tr>
           </thead>
@@ -326,7 +344,12 @@ export default function QuoteEditor({
                 }}
                 className="border-b border-rule last:border-b-0 hover:bg-paper-sunk/40"
               >
-                <td className="num px-2 py-1 align-top text-ink-faint">{pad2(index + 1)}</td>
+                <td
+                  className="num calc px-2 py-2 align-top"
+                  title="Line number — set by the order of the rows"
+                >
+                  {pad2(index + 1)}
+                </td>
                 <td className="px-1 py-1 align-top">
                   <textarea
                     value={item.desc}
@@ -370,7 +393,12 @@ export default function QuoteEditor({
                     className={`${cellClass} num`}
                   />
                 </td>
-                <td className="num px-2 py-2 align-top">{formatPaise(item.qty * item.rate)}</td>
+                <td
+                  className="num calc px-2 py-2 align-top"
+                  title="Calculated — rate x quantity"
+                >
+                  {formatPaise(item.qty * item.rate)}
+                </td>
                 <td className="px-1 py-1 align-top no-print">
                   <div className="flex gap-0.5">
                     <IconBtn label="Move up" onClick={() => move(index, index - 1)}>↑</IconBtn>
@@ -416,7 +444,12 @@ export default function QuoteEditor({
       </div>
 
       {/* --- totals + terms --- */}
-      <h3 className="label mb-1.5">Terms and totals</h3>
+      <div className="mb-1.5 flex items-baseline justify-between">
+        <h3 className="label">Terms and totals</h3>
+        <span className="text-[11px] text-ink-faint no-print">
+          terms are editable · totals are calculated from the lines above
+        </span>
+      </div>
       <div className="mb-4 grid grid-cols-2 gap-4">
         <div className="panel p-4">
           <h3 className="label mb-2">Terms and conditions</h3>
@@ -433,17 +466,19 @@ export default function QuoteEditor({
             <tbody>
               <tr>
                 <td className="py-1">Sub Total</td>
-                <td className="num py-1">{formatPaise(totals.sub)}</td>
+                <td className="num calc py-1 pr-2">{formatPaise(totals.sub)}</td>
               </tr>
               {totals.taxRows.map((row) => (
                 <tr key={row.label}>
                   <td className="py-1">{row.label}</td>
-                  <td className="num py-1">{formatPaise(row.paise)}</td>
+                  <td className="num calc py-1 pr-2">{formatPaise(row.paise)}</td>
                 </tr>
               ))}
               <tr className="border-t border-rule-strong">
                 <td className="py-1.5 font-semibold">Total Amount</td>
-                <td className="num py-1.5 font-semibold">{formatPaise(totals.total)}</td>
+                <td className="num calc py-1.5 pr-2 font-semibold text-ink">
+                  {formatPaise(totals.total)}
+                </td>
               </tr>
             </tbody>
           </table>
@@ -492,10 +527,12 @@ export default function QuoteEditor({
   )
 }
 
-const inputClass =
-  'w-full border border-rule bg-paper-raised px-2 py-1 text-[13px] focus:border-accent'
-const cellClass =
-  'w-full border border-transparent bg-transparent px-1 py-1 text-[13px] hover:border-rule focus:border-accent focus:bg-paper-raised'
+// Both defined in index.css, so the "boxed = editable" convention is stated in
+// one place. The cells used to be `border-transparent bg-transparent`, visible
+// only on hover — which made an editable description and a calculated amount
+// look exactly the same.
+const inputClass = 'field'
+const cellClass = 'field-cell'
 
 function Field({
   label,
