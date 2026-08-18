@@ -178,3 +178,105 @@ describe('skip rules and de-duplication — §5', () => {
     expect(parsed.map((p) => p.role).sort()).toEqual(['offer', 'request'])
   })
 })
+
+/**
+ * A real thread out of the desk's mailbox, reduced to the shape that broke the
+ * parser. Two things here that §11's fixture does not have:
+ *
+ *   1. "Qty- 04nos." — the unit runs straight into the digits, and §5's
+ *      pattern ends in \b, which cannot match between "4" and "n". The line
+ *      did not match at all.
+ *   2. the quantity sits on its OWN line, under the product, with the
+ *      specification in between — §5 assumes one line per item.
+ *
+ * Between them, both products came out with no quantity, and the builder's
+ * `|| 1` fallback turned that into a quotation for one of each.
+ */
+const HP_THREAD = [
+  'On Mon, Jul 27, 2026 at 11:59 AM rakhi gupte <rakhi.gupte@newtech.in> wrote:',
+  'Dear Sir,',
+  'Please find details below -',
+  '',
+  'HP 280 G9 MT Desktop - Rs. 87,250 + gst each ( Very limited stocks)',
+  'Core i5-14400,  16 GB RAM, 512GB SSD, Wi-Fi, Onboard , Win 11 Pro., 3 Years Warranty',
+  '',
+  'Qty- 04nos.',
+  '',
+  'HP 22" TFT - Rs. 6,750 + gst each',
+  '',
+  'Qty- 08nos.',
+  '',
+  'Price valid for 2 days / till stocks last.',
+  '',
+  'Thanks & Regards,',
+].join('\n')
+
+describe('a quantity on its own line, and a unit stuck to the digits', () => {
+  const parsed = parseThread(HP_THREAD)
+
+  it('finds both products and nothing else', () => {
+    expect(parsed).toHaveLength(2)
+  })
+
+  it('reads 04 and 08 — the bug that reached a customer quotation', () => {
+    expect(parsed.map((p) => p.qty)).toEqual([4, 8])
+  })
+
+  it('still reads the rates', () => {
+    expect(parsed.map((p) => p.rate)).toEqual([8_725_000, 675_000])
+  })
+
+  it('carries the specification into the description, where it is quoted from', () => {
+    expect(parsed[0]!.desc).toBe(
+      'HP 280 G9 MT Desktop\nCore i5-14400, 16 GB RAM, 512GB SSD, Wi-Fi, Onboard , Win 11 Pro., 3 Years Warranty',
+    )
+    expect(parsed[1]!.desc).toBe('HP 22" TFT')
+  })
+
+  it('does not swallow the sales patter as a specification', () => {
+    for (const line of parsed) {
+      expect(line.desc).not.toContain('Price valid')
+      expect(line.desc).not.toContain('stocks last')
+    }
+  })
+
+  it('does not overwrite a quantity the product line already stated', () => {
+    const twice = parseThread(
+      [
+        'On Mon, Jul 27, 2026 at 11:59 AM rakhi gupte <rakhi.gupte@newtech.in> wrote:',
+        'Widget A - Rs. 100 each, Qty- 02',
+        'Qty- 09nos.',
+      ].join('\n'),
+    )
+    expect(twice).toHaveLength(1)
+    expect(twice[0]!.qty).toBe(2)
+  })
+
+  it('reads the quantity spellings that appear in real threads', () => {
+    const out = parseThread(
+      [
+        'On Mon, Jul 27, 2026 at 11:59 AM a <a@newtech.in> wrote:',
+        'Widget - Rs. 100 each',
+        'Qty- 04nos.',
+        'Gadget - Rs. 200 each',
+        'Quantity- 12',
+        'Gizmo - Rs. 300 each',
+        'Qty : 7 Nos',
+      ].join('\n'),
+    )
+    expect(out.map((p) => p.qty)).toEqual([4, 12, 7])
+  })
+
+  it('does not carry a quantity across into the next block', () => {
+    const out = parseThread(
+      [
+        'On Mon, Jul 27, 2026 at 11:59 AM a <a@newtech.in> wrote:',
+        'Widget - Rs. 100 each',
+        'On Mon, Jul 27, 2026 at 10:00 AM b <b@customer.com> wrote:',
+        'Qty- 09nos.',
+      ].join('\n'),
+    )
+    expect(out).toHaveLength(1)
+    expect(out[0]!.qty).toBe(0)
+  })
+})

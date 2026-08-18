@@ -12,7 +12,17 @@ import { findMake } from './makes.js'
  */
 
 // §5, verbatim.
-const QTY_RE = /\bqty\s*[-–:.]?\s*(?:nos?\.?\s*[-–:]?\s*)?(\d{1,4})\b/i
+/**
+ * §5's quantity pattern, with two corrections found against a real thread.
+ *
+ * §5 ends it with `\b`, which cannot match between "4" and "n" — so
+ * "Qty- 04nos." did not match AT ALL, and the product came through with no
+ * quantity. `(?!\d)` says the same thing that `\b` was meant to say (the number
+ * is complete) without demanding that a non-word character follow it.
+ *
+ * "Quantity" is also accepted alongside "Qty"; both appear in the desk's mail.
+ */
+const QTY_RE = /\b(?:qty|quantity)\s*[-–:.]?\s*(?:nos?\.?\s*[-–:]?\s*)?(\d{1,4})(?!\d)/i
 const RATE_RE = /(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?)/i
 const LENGTH_RE = /(\d+(?:\.\d+)?)\s*(?:mtr|mtrs|meter|metre|m)\b/gi
 const CODE_RE = /\b#?([A-Z]{2,}[-–]?[A-Z0-9]{3,})\b/g
@@ -92,6 +102,39 @@ function cleanDescription(text: string): string {
     .trim()
 }
 
+/**
+ * Does this line read like a continuation of the product above it?
+ *
+ * Deliberately narrow. A false positive prints a closing remark inside a
+ * product description on a customer-facing quotation, which is worse than
+ * losing a specification the user can retype — so it needs a concrete signal:
+ * a number with a hardware unit, or a hardware word.
+ */
+export function looksLikeSpecification(text: string): boolean {
+  if (text.length > 300) return false
+  const UNIT = /\b\d+\s*(?:gb|tb|mb|ghz|mhz|kva|watt|watts|inch|mtr|mm|cm)\b/i
+  const WORD =
+    /\b(?:ram|ssd|hdd|nvme|emmc|warranty|core|i[3579]|ryzen|processor|graphics|display|resolution|wi-?fi|bluetooth|ethernet|windows|onboard|dos|ups)\b/i
+  return UNIT.test(text) || WORD.test(text)
+}
+
+/**
+ * Fold a specification line into the product above it. The description is what
+ * gets quoted, so the spec belongs there — the customer is buying that
+ * configuration, not just "HP 280 G9 MT Desktop".
+ */
+function appendSpecification(item: ParsedLine, raw: string): void {
+  const spec = cleanDescription(raw).replace(/\s+/g, ' ').trim()
+  if (spec === '') return
+
+  item.desc = `${item.desc}\n${spec}`
+  item.raw = `${item.raw}\n${raw}`
+  // A model code or brand often lives in the specification rather than the
+  // product line, so both are worth another look now there is more to read.
+  if (item.partCode === '') item.partCode = extractPartCode(item.raw)
+  if (item.make === '') item.make = findMake(item.raw)
+}
+
 export interface ParseOptions {
   internalDomain?: string
 }
@@ -105,16 +148,40 @@ export function parseThread(thread: string, options: ParseOptions = {}): ParsedL
     const senderIsInternal = block.sender.endsWith(`@${internalDomain}`)
     const senderKnown = block.sender !== ''
 
+    /**
+     * §5 assumes one line per item. Real threads from the desk do not: the
+     * product, its specification and its quantity routinely arrive on three
+     * separate lines. These two carry an item across those lines — `lastItem`
+     * for the whole block, `adjacent` only while nothing has interrupted.
+     */
+    let lastItem: ParsedLine | null = null
+    let adjacent = false
+
     for (const rawLine of block.lines) {
       const raw = rawLine.trim()
-      if (raw === '') continue
-      if (SKIP_RE.test(raw)) continue
+      if (raw === '' || SKIP_RE.test(raw)) {
+        // A blank or a signature ends a specification, but not the product —
+        // the quantity often sits a blank line below it.
+        adjacent = false
+        continue
+      }
 
       const qtyMatch = QTY_RE.exec(raw)
       const rateMatch = RATE_RE.exec(raw)
 
       // §5 — "a line is a candidate item line if it contains a quantity OR a price".
-      if (!qtyMatch && !rateMatch) continue
+      if (!qtyMatch && !rateMatch) {
+        // A specification continuing the line above it, e.g.
+        // "Core i5-14400, 16 GB RAM, 512GB SSD, ...". It has to be the very
+        // next line and it has to read like a specification, or a closing
+        // remark would end up printed as part of the product.
+        if (adjacent && lastItem && looksLikeSpecification(raw)) {
+          appendSpecification(lastItem, raw)
+        } else {
+          adjacent = false
+        }
+        continue
+      }
 
       const qty = qtyMatch?.[1] ? Number(qtyMatch[1]) : 0
       const rate = rateMatch?.[1] ? (parseRupeesToPaise(rateMatch[1]) ?? 0) : 0
@@ -123,7 +190,18 @@ export function parseThread(thread: string, options: ParseOptions = {}): ParsedL
       // only a price, fall back to the text before the rate.
       const cutAt = qtyMatch?.index ?? rateMatch?.index ?? raw.length
       const desc = cleanDescription(raw.slice(0, cutAt))
-      if (desc === '') continue
+
+      if (desc === '') {
+        // A quantity on its own, e.g. "Qty- 04nos." under the product it
+        // belongs to. Only fills a gap: a product that already stated its own
+        // quantity is never overwritten by a later stray line.
+        if (qty > 0 && lastItem && lastItem.qty === 0) {
+          lastItem.qty = qty
+          lastItem.raw = `${lastItem.raw}\n${raw}`
+        }
+        adjacent = false
+        continue
+      }
 
       // §5 — "a line carrying a price is an offer; a line with only a quantity
       // is a request."
@@ -136,7 +214,7 @@ export function parseThread(thread: string, options: ParseOptions = {}): ParsedL
         senderKnown && ((role === 'offer' && !senderIsInternal) || (role === 'request' && senderIsInternal))
 
       counter += 1
-      lines.push({
+      const item: ParsedLine = {
         id: `line-${counter}`,
         raw,
         desc,
@@ -147,7 +225,10 @@ export function parseThread(thread: string, options: ParseOptions = {}): ParsedL
         role,
         source: 'pattern',
         ...(roleUncertain ? { roleUncertain: true } : {}),
-      })
+      }
+      lines.push(item)
+      lastItem = item
+      adjacent = true
     }
   }
 
