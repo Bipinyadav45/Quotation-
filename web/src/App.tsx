@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { ParsedLine, Quote, QuoteItem } from '@shared/schema'
+import { itemsFromLines } from './lib/draft'
 import { DEFAULT_SALESPERSON, DEFAULT_TERMS, GST_RATE_PERCENT } from '@shared/company'
 import { endOfMonth, formatDateLong, toISODate } from '@shared/fy'
 import { formatPaise } from '@shared/money'
@@ -23,41 +24,7 @@ const FLOW: Array<{ screen: Screen; label: string; locked: string }> = [
   { screen: 'document', label: 'Document', locked: 'Save the quotation first' },
 ]
 
-const toItem = (line: ParsedLine): QuoteItem => ({
-  desc: line.desc,
-  make: line.make,
-  partCode: line.partCode,
-  qty: line.qty,
-  rate: line.rate,
-})
 
-/**
- * Turn the parsed thread into the lines of a quotation.
- *
- * A two-sided thread holds the same product twice — the customer's request and
- * our priced offer. Without the ask-vs-quote comparison there is nothing that
- * can tell they are one product, so listing both puts five zero-priced
- * duplicates on a five-line quotation.
- *
- * So: if anything in the thread carries a price, those are what we are quoting
- * and the rest is the conversation around them. If nothing does — an incoming
- * RFQ — then every line is wanted.
- *
- * What gets left out is never dropped quietly; it joins the "not read" list on
- * the quotation screen, because a quantity the customer stated often lives on
- * exactly those lines.
- */
-function itemsFromLines(lines: ParsedLine[]): { items: QuoteItem[]; setAside: string[] } {
-  const priced = lines.filter((line) => line.rate > 0)
-  if (priced.length === 0) return { items: lines.map(toItem), setAside: [] }
-
-  return {
-    items: priced.map(toItem),
-    setAside: lines
-      .filter((line) => line.rate === 0)
-      .map((line) => `${line.desc.split('\n')[0]}${line.qty > 0 ? `  (qty ${line.qty})` : ''}`),
-  }
-}
 
 const toEditorItem = (item: QuoteItem): EditorItem => ({
   key: crypto.randomUUID(),
@@ -204,9 +171,19 @@ export default function App() {
             onParsed={(nextLines, usedThread, notRead, notes) => {
               setThread(usedThread)
               setParsedThread(usedThread)
-              const { items, setAside } = itemsFromLines(nextLines)
+              const { items, setAside, assumedQty } = itemsFromLines(nextLines)
               setSkipped([...notRead, ...setAside])
-              setWarnings(notes)
+              setWarnings([
+                ...notes,
+                // Never let an invented number reach a customer unannounced.
+                ...(assumedQty > 0
+                  ? [
+                      `${assumedQty} line${assumedQty === 1 ? '' : 's'} had no quantity anywhere in the thread, ` +
+                        `so ${assumedQty === 1 ? 'it has' : 'they have'} been set to 1. Check ` +
+                        `${assumedQty === 1 ? 'it' : 'them'} against what the customer asked for before saving.`,
+                    ]
+                  : []),
+              ])
               setDraft(newDraft(items))
               setScreen('editor')
             }}
