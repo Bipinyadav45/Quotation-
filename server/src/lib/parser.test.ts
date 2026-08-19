@@ -566,3 +566,70 @@ describe('a thread carrying several revisions of the same quotation', () => {
     expect(warnings).toEqual([])
   })
 })
+
+describe('numbers that were silently misread', () => {
+  const parse1 = (line: string) =>
+    parseThread(['On Thu, Jul 9, 2026 at 7:42 AM a <a@x.com> wrote:', line].join('\n'))
+
+  it('reads a grouped quantity, instead of its first digit', () => {
+    // "Qty- 1,000" matched the "1" and stopped: an order-of-magnitude error,
+    // silent, on the one number this application exists to get right.
+    expect(parse1('Cable - Rs. 50 each, Qty- 1,000')[0]?.qty).toBe(1000)
+    expect(parse1('Cable - Rs. 50 each, Qty- 12,500')[0]?.qty).toBe(12500)
+  })
+
+  it('reads a quantity above four digits at all', () => {
+    expect(parse1('Cable - Rs. 50 each, Qty- 10000')[0]?.qty).toBe(10000)
+  })
+
+  it('does not start a quantity in the middle of a number', () => {
+    // "12,500 nos" matched at the "500" — the wrong half.
+    expect(parse1('Cable - Rs. 50 each, 12,500 nos')[0]?.qty).toBe(12500)
+  })
+
+  it('rejects a number too large to be an order quantity', () => {
+    // A phone number must not arrive as a count. 0 is the parser's "not
+    // stated"; web/src/lib/draft.ts is what turns that into 1 on a quotation.
+    expect(parse1('Cable - Rs. 50 each, Qty- 9,870,450,278')[0]?.qty).toBe(0)
+  })
+
+  it('reads the rate markers that Indian quotes actually use', () => {
+    const cases: Array<[string, number]> = [
+      ['Cable 1250 INR each', 125_000],
+      ['Cable Rate 1250/-', 125_000],
+      ['Cable @ 1250 each', 125_000],
+      ['Cable 1,04,500/- each', 10_450_000],
+      ['Cable Price: 1,250.50', 125_050],
+      ['Cable - Rs. 1,250 each', 125_000],
+    ]
+    for (const [line, expected] of cases) {
+      expect(parse1(line)[0]?.rate, line).toBe(expected)
+    }
+  })
+
+  it('a priced line is an offer — a missed rate would flip it to a request', () => {
+    expect(parse1('Cable 1250 INR each')[0]?.role).toBe('offer')
+    expect(parse1('Cable Rate 1250/-')[0]?.role).toBe('offer')
+  })
+
+  it('never invents a rate from a bare number', () => {
+    // Without a marker there is no telling 25 the price from 25 the quantity.
+    expect(parse1('Cable 1.5 mtr, Qty- 25')[0]?.rate).toBe(0)
+  })
+
+  it('does not read "@ 5 nos" as a rate of five', () => {
+    const line = parse1('Cable - Rs. 50 each @ 5 nos')[0]
+    expect(line?.rate).toBe(5_000)
+    expect(line?.qty).toBe(5)
+  })
+
+  it('does not read a rupee amount as a length', () => {
+    // "Rs. 550 m" read as 550 metres and raised a spec flag against a line
+    // whose only crime was being priced in rupees.
+    expect(firstLength('Rs. 550 m')).toBeNull()
+    expect(firstLength('INR 1,250 m')).toBeNull()
+    // A real length still reads.
+    expect(firstLength('Cable 1.5 m')).toBe(1.5)
+    expect(firstLength('Cable 1.5 mtr - Rs. 550')).toBe(1.5)
+  })
+})

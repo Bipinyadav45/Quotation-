@@ -21,8 +21,19 @@ import { findMake } from './makes.js'
  * is complete) without demanding that a non-word character follow it.
  *
  * "Quantity" is also accepted alongside "Qty"; both appear in the desk's mail.
+ *
+ * Two more, found by reading the pattern rather than the mail:
+ *
+ *   - `\d{1,4}` with no comma meant "Qty- 1,000" matched the "1" and stopped.
+ *     Not a miss — a silent order-of-magnitude error, on the one number this
+ *     application exists to get right. And "Qty- 10000" matched nothing at all.
+ *   - The unit form had no left guard, so "12,500 nos" matched at the "500",
+ *     reading the wrong half of the number. Hence the lookbehind.
+ *
+ * Digits are captured with their commas and stripped by `readCount` below,
+ * which is also where an absurd value is rejected rather than quoted.
  */
-const QTY_RE = /\b(?:qty|quantity)\s*[-–:.]?\s*(?:nos?\.?\s*[-–:]?\s*)?(\d{1,4})(?!\d)/i
+const QTY_RE = /\b(?:qty|quantity)\s*[-–:.]?\s*(?:nos?\.?\s*[-–:]?\s*)?(\d[\d,]*)(?![\d,])/i
 
 /**
  * The other way a quantity arrives: a bare number and a counting unit, with no
@@ -32,7 +43,7 @@ const QTY_RE = /\b(?:qty|quantity)\s*[-–:.]?\s*(?:nos?\.?\s*[-–:]?\s*)?(\d{1
  * would all read as quantities, and a specification would silently become a
  * count on a customer's quotation.
  */
-const QTY_UNIT_RE = /\b(\d{1,4})\s*(?:nos?|pcs?|pieces?|units?|sets?)\b\.?/i
+const QTY_UNIT_RE = /(?<![\d,.])(\d[\d,]*)\s*(?:nos?|pcs?|pieces?|units?|sets?)\b\.?/i
 
 /**
  * What "Qty- 04nos." leaves behind once the quantity is matched: "nos.". A unit
@@ -40,7 +51,41 @@ const QTY_UNIT_RE = /\b(\d{1,4})\s*(?:nos?|pcs?|pieces?|units?|sets?)\b\.?/i
  * there is a description after the quantity at all.
  */
 const LEADING_UNIT_RE = /^\s*(?:nos?|pcs?|pieces?|units?|sets?)\b\.?[\s.,:;-]*/i
-const RATE_RE = /(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?)/i
+/**
+ * §5 requires a currency marker BEFORE the number. Indian quotes routinely put
+ * it after, or use no word at all:
+ *
+ *   1250 INR          Rate 1250/-        @ 1250 each        1,04,500/- each
+ *
+ * Every one of those missed, and a missed rate is not a blank cell — it flips
+ * the line from an offer to a request, so the desk's own priced line comes back
+ * flagged as something the customer asked for and nobody quoted.
+ *
+ * Tried in order, first match wins. A bare number is deliberately NOT a rate:
+ * without a marker there is no way to tell 25 the price from 25 the quantity,
+ * and inventing a price is far worse than missing one.
+ */
+const RATE_PATTERNS: RegExp[] = [
+  // Rs. 1,250   INR 1250   ₹1250
+  /(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?)/i,
+  // 1250 INR   1250 Rs.
+  /([\d,]+(?:\.\d{1,2})?)\s*(?:inr|rs\.?|₹)(?![a-z])/i,
+  // Rate 1250   Price: 1,250   Cost - 1250
+  /\b(?:rate|price|cost|amount)\s*[-–:@]?\s*([\d,]+(?:\.\d{1,2})?)/i,
+  // 1,04,500/-   1250 /-
+  /([\d,]+(?:\.\d{1,2})?)\s*\/-/,
+  // @ 1250 each — but not "@ 5 nos", which is a quantity
+  /@\s*([\d,]+(?:\.\d{1,2})?)(?!\s*(?:nos?|pcs?|pieces?|units?|sets?)\b)/i,
+]
+
+/** First rate marker on the line, or null. */
+function matchRate(text: string): RegExpExecArray | null {
+  for (const pattern of RATE_PATTERNS) {
+    const found = pattern.exec(text)
+    if (found) return found
+  }
+  return null
+}
 const LENGTH_RE = /(\d+(?:\.\d+)?)\s*(?:mtr|mtrs|meter|metre|m)\b/gi
 const CODE_RE = /\b#?([A-Z]{2,}[-–]?[A-Z0-9]{3,})\b/g
 
@@ -115,12 +160,37 @@ export function splitBlocks(thread: string): Block[] {
   return blocks
 }
 
-/** §6's `spec` rule compares the FIRST length value on each side. */
+/**
+ * A captured quantity, comma grouping removed. Returns 0 — "not stated" — for
+ * anything that cannot be a real order quantity, so a phone number or a part
+ * code fragment cannot arrive on a quotation as a count.
+ */
+function readCount(captured: string | undefined): number {
+  if (!captured) return 0
+  const n = Number(captured.replace(/,/g, ''))
+  if (!Number.isSafeInteger(n) || n <= 0 || n > 999_999) return 0
+  return n
+}
+
+/**
+ * §6's `spec` rule compares the FIRST length value on each side.
+ *
+ * The bare "m" alternative made "Rs. 550 m" read as 550 metres, which raises a
+ * `spec` flag against a line whose only crime is being priced in rupees. A
+ * number carrying a currency marker is money, never a measurement.
+ */
+const MONEY_BEFORE_RE = /(?:rs\.?|inr|₹)\s*[\d,]*$/i
+
 export function firstLength(text: string): number | null {
   LENGTH_RE.lastIndex = 0
-  const match = LENGTH_RE.exec(text)
+  let match: RegExpExecArray | null
+  while ((match = LENGTH_RE.exec(text)) !== null) {
+    if (MONEY_BEFORE_RE.test(text.slice(0, match.index))) continue
+    LENGTH_RE.lastIndex = 0
+    return match[1] ? Number(match[1]) : null
+  }
   LENGTH_RE.lastIndex = 0
-  return match?.[1] ? Number(match[1]) : null
+  return null
 }
 
 /** §5's part-code rule. */
@@ -330,7 +400,7 @@ export function parseThreadDetailed(thread: string, options: ParseOptions = {}):
       // Either "Qty- 04" or a bare "4 nos". The keyword form wins when both are
       // present, since it is the explicit one.
       const qtyMatch = QTY_RE.exec(raw) ?? QTY_UNIT_RE.exec(raw)
-      const rateMatch = RATE_RE.exec(raw)
+      const rateMatch = matchRate(raw)
 
       // §5 — "a line is a candidate item line if it contains a quantity OR a price".
       if (!qtyMatch && !rateMatch) {
@@ -380,7 +450,7 @@ export function parseThreadDetailed(thread: string, options: ParseOptions = {}):
         continue
       }
 
-      const qty = qtyMatch?.[1] ? Number(qtyMatch[1]) : 0
+      const qty = readCount(qtyMatch?.[1])
       const rate = rateMatch?.[1] ? (parseRupeesToPaise(rateMatch[1]) ?? 0) : 0
 
       // §5 — "Description = the text before the Qty match". When a line carries
