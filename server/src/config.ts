@@ -85,7 +85,12 @@ export const config = {
   sofficePath,
   winwordPath,
   pdfBackend: choosePdfBackend(),
-  anthropicApiKey: process.env.ANTHROPIC_API_KEY?.trim() || null,
+  /**
+   * Server-side only, and it must stay that way — web/bundle-safety.test.ts
+   * greps the built browser bundle for this value to prove it never ships.
+   */
+  geminiApiKey: process.env.GEMINI_API_KEY?.trim() || null,
+  geminiModel: process.env.GEMINI_MODEL?.trim() || null,
 
   /**
    * §5 role assignment cross-checks the sender of each thread block. Anything

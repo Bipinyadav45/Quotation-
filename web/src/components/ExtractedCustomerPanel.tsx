@@ -72,7 +72,7 @@ export default function ExtractedCustomerPanel({
     <div className="panel mb-3 p-3 no-print">
       <div className="mb-2 flex items-baseline justify-between gap-4">
         <h3 className="label">
-          Read from the thread by Claude
+          Read from the thread by AI
           <span className="ml-2 font-normal normal-case tracking-normal text-ink-faint">
             confidence: {extracted.confidence} · nothing is filled in until you click it
           </span>
@@ -84,7 +84,7 @@ export default function ExtractedCustomerPanel({
 
       {extracted.confidence === 'low' && (
         <Callout tone="drift" label="Unsure" className="mb-2">
-          Claude was not confident which party in this thread is the customer. Check every field
+          The AI was not confident which party in this thread is the customer. Check every field
           before accepting it.
         </Callout>
       )}
@@ -106,7 +106,7 @@ export default function ExtractedCustomerPanel({
 
       {rows.length === 0 ? (
         <p className="text-[13px] text-ink-muted">
-          Claude found no customer details in this thread. Nothing was invented to fill the gap.
+          No customer details were found in this thread. Nothing was invented to fill the gap.
         </p>
       ) : (
         <table className="w-full text-[12.5px]">

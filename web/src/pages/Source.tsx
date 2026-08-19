@@ -105,7 +105,7 @@ export default function Source({ thread, onThreadChange, onParsed, onCustomerRea
             disabled={busy !== null || empty}
             title="Slower, and costs a little. Worth it when the ordinary reader misses lines."
           >
-            {busy === 'llm' ? 'Asking Claude…' : 'Read it with Claude instead'}
+            {busy === 'llm' ? 'Reading with AI…' : 'Read it with AI instead'}
           </button>
         )}
 
@@ -165,7 +165,7 @@ export default function Source({ thread, onThreadChange, onParsed, onCustomerRea
 
       {capabilities.data?.llm && !empty && (
         <p className="mt-2 text-[12px] text-ink-muted">
-          Start with <span className="font-medium">Read the thread</span>. Only reach for Claude if
+          Start with <span className="font-medium">Read the thread</span>. Only reach for the AI if
           lines are missing or landed on the wrong side.
         </p>
       )}

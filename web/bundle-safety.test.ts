@@ -8,7 +8,9 @@ import { describe, expect, it } from 'vitest'
  *
  * Checking the source is not enough: a key leaks into a browser bundle when
  * something server-side gets imported from client code, and the source looks
- * fine right up until the bundler inlines it. So this reads the BUILT output.
+ * fine right up until the bundler inlines it. So this reads the BUILT output,
+ * and it greps for the REAL key out of .env rather than only the variable name
+ * — a bundler inlines the value, not the name.
  *
  * Run `npm run build` first; without web/dist there is nothing to check and the
  * test says so rather than passing quietly.
@@ -27,25 +29,30 @@ function everyFile(dir: string): string[] {
 describe('the built client bundle', () => {
   const built = existsSync(DIST)
 
-  it.runIf(built)('contains no Anthropic API key or key reference', () => {
+  it.runIf(built)('contains no API key, for any provider', () => {
     const envPath = path.resolve(ROOT, '.env')
-    const realKey = existsSync(envPath)
-      ? /ANTHROPIC_API_KEY\s*=\s*(\S+)/.exec(readFileSync(envPath, 'utf8'))?.[1]
-      : undefined
+    // Every secret the server holds, not just the one that happened to exist
+    // when this was written.
+    const env = existsSync(envPath) ? readFileSync(envPath, 'utf8') : ''
+    const realKeys = [...env.matchAll(/^(?:\w*_?API_KEY|\w*_KEY|\w*_TOKEN|\w*_SECRET)\s*=\s*(\S+)/gim)]
+      .map((m) => m[1]!)
+      .filter((v) => v.length > 8)
 
     for (const file of everyFile(DIST)) {
       const contents = readFileSync(file, 'utf8')
       const relative = path.relative(ROOT, file)
 
-      expect(contents, `${relative} references the API key env var`).not.toContain(
-        'ANTHROPIC_API_KEY',
-      )
-      // The key prefix, in case a literal was pasted somewhere.
+      for (const name of ['GEMINI_API_KEY', 'ANTHROPIC_API_KEY']) {
+        expect(contents, `${relative} references ${name}`).not.toContain(name)
+      }
+
+      // Key shapes, in case a literal was ever pasted into the source.
       expect(contents, `${relative} contains something shaped like an API key`).not.toMatch(
-        /sk-ant-[A-Za-z0-9_-]{10}/,
+        /sk-ant-[A-Za-z0-9_-]{10}|AIza[A-Za-z0-9_-]{20}|AQ\.[A-Za-z0-9_-]{20}/,
       )
-      if (realKey && realKey.length > 8) {
-        expect(contents, `${relative} contains the REAL key from .env`).not.toContain(realKey)
+
+      for (const secret of realKeys) {
+        expect(contents, `${relative} contains a REAL secret from .env`).not.toContain(secret)
       }
     }
   })
@@ -53,7 +60,12 @@ describe('the built client bundle', () => {
   it.runIf(built)('pulls in no server-only module', () => {
     // If any of these appear, something under web/ imported a server module and
     // dragged the whole server surface — and its secrets — into the browser.
-    const serverOnly = ['better-sqlite3', 'node:child_process', '@anthropic-ai/sdk']
+    const serverOnly = [
+      'better-sqlite3',
+      'node:child_process',
+      'generativelanguage.googleapis.com',
+      'x-goog-api-key',
+    ]
     for (const file of everyFile(DIST).filter((f) => f.endsWith('.js'))) {
       const contents = readFileSync(file, 'utf8')
       for (const marker of serverOnly) {

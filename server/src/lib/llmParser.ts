@@ -1,11 +1,11 @@
 import { LlmParseResultSchema, type ParsedLine, type ParseResponse } from '@shared/schema.js'
 import { parseRupeesToPaise } from '@shared/money.js'
-import { askClaude } from './claude.js'
+import { askAi } from './ai.js'
 import { parseThreadDetailed } from './parser.js'
 import { findMake } from './makes.js'
 
 /**
- * The Claude fallback parser (§5).
+ * The AI fallback parser (§5).
  *
  * "Exposed as a separate button, never automatic." It exists for threads the
  * regexes cannot handle — tables pasted out of Excel, lines that put the
@@ -93,7 +93,7 @@ export async function parseThreadWithClaude(thread: string): Promise<ParseRespon
 
   // §5's rule, unchanged: on ANY failure return the pattern parser's result
   // with a note. This never surfaces an error page.
-  const result = await askClaude({
+  const result = await askAi({
     system: SYSTEM,
     user: thread,
     outputSchema: OUTPUT_SCHEMA,
@@ -103,7 +103,7 @@ export async function parseThreadWithClaude(thread: string): Promise<ParseRespon
 
   if (!result.ok) return fallback(`${result.reason} The pattern parser was used instead.`)
   if (result.data.lines.length === 0) {
-    return fallback('Claude found no line items, so the pattern parser was used instead.')
+    return fallback('The AI found no line items, so the pattern parser was used instead.')
   }
 
   const lines: ParsedLine[] = []
@@ -138,7 +138,7 @@ export async function parseThreadWithClaude(thread: string): Promise<ParseRespon
   })
 
   if (lines.length === 0) {
-    return fallback("None of Claude's lines could be read, so the pattern parser was used.")
+    return fallback("None of the AI's lines could be read, so the pattern parser was used.")
   }
 
   return {

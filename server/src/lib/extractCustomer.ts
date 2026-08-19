@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { config } from '../config.js'
-import { askClaude, type ClaudeResult } from './claude.js'
+import { askAi, type AiResult } from './ai.js'
 import { findCustomerByName, searchCustomers, type CustomerRecord } from './customers.js'
 
 /**
@@ -74,7 +74,7 @@ export interface ExtractionResult {
 
 export async function extractCustomerFromThread(
   thread: string,
-): Promise<ClaudeResult<ExtractionResult>> {
+): Promise<AiResult<ExtractionResult>> {
   const system = `You read B2B email threads at an Indian IT hardware reseller and pull out the CUSTOMER's details.
 
 The reseller is Newtech Computer Services Pvt. Ltd. Their email addresses end in
@@ -95,7 +95,7 @@ Rules:
 - confidence: "high" when the thread clearly identifies one customer,
   "medium" when you had to infer, "low" when you are unsure who the customer is.`
 
-  const result = await askClaude({
+  const result = await askAi({
     system,
     user: thread,
     outputSchema: OUTPUT_SCHEMA,

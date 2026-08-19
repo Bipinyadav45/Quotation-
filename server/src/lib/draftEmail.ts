@@ -3,7 +3,7 @@ import type { Quote } from '@shared/schema.js'
 import { amountInWords, computeTotals, formatPaise, pad2 } from '@shared/money.js'
 import { formatDateLong, fromISODate } from '@shared/fy.js'
 import { COMPANY } from '@shared/company.js'
-import { askClaude, type ClaudeResult } from './claude.js'
+import { askAi, type AiResult } from './ai.js'
 
 /**
  * Draft the covering email that goes with the quotation.
@@ -39,7 +39,7 @@ const OUTPUT_SCHEMA = {
   additionalProperties: false,
 } as const
 
-export async function draftCoveringEmail(quote: Quote): Promise<ClaudeResult<DraftedEmail>> {
+export async function draftCoveringEmail(quote: Quote): Promise<AiResult<DraftedEmail>> {
   const totals = computeTotals(quote.items, quote.tax.mode, quote.tax.rate)
 
   // Everything the model needs, already formatted, so it never has to do
@@ -97,7 +97,7 @@ never recompute or reformat them.`
     quote.sourceThread.slice(0, 12_000) || '(no thread was recorded)',
   ].join('\n')
 
-  return askClaude({
+  return askAi({
     system,
     user,
     outputSchema: OUTPUT_SCHEMA,

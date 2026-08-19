@@ -46,13 +46,19 @@ npm start                 # http://localhost:4000
 |---|---|---|
 | **Customer master** — the second quotation to a customer fills itself | no | free |
 | **Price memory** — what you last charged, under each Rate cell | no | free |
-| **Parse with Claude** — for threads the patterns cannot read | yes | ~₹5 |
+| **Read it with AI** — for threads the patterns cannot read | yes | ~₹0.2 |
 | **Read customer details** — name, address, GSTIN out of the thread | yes | ~₹1.5 |
-| **Draft covering email** — the note that goes with the quotation | yes | ~₹3 |
+| **Draft covering email** — the note that goes with the quotation | yes | ~₹0.4 |
 
 The first two are the ones that save the most typing, and they cost nothing —
-they read your own records. With no `ANTHROPIC_API_KEY` the other three are not
+they read your own records. With no `GEMINI_API_KEY` the other three are not
 shown at all and everything else works exactly as before.
+
+The model is Google Gemini, called over plain `fetch` from
+[server/src/lib/ai.ts](server/src/lib/ai.ts) — one module, never throws, and the
+only place a key is read. `gemini-3.7-flash` by default, with three flash models
+behind it: 503 UNAVAILABLE from this endpoint is genuinely random (four
+identical calls measured 503, 503, 503, 200), so one model is not enough.
 
 **AI suggests, a human accepts.** Nothing Claude produces reaches a saved
 quotation or a rendered document without a click — per field where the fields
