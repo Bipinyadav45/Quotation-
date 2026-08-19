@@ -161,6 +161,8 @@ export const ParseResponseSchema = z.object({
    * quantity reaches a customer.
    */
   skipped: z.array(z.string()).default([]),
+  /** Judgements the desk must make that the parser cannot — e.g. a superseded price. */
+  warnings: z.array(z.string()).default([]),
   /** Set when the LLM parse failed and we fell back to the pattern parser (§5). */
   note: z.string().optional(),
 })

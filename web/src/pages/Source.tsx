@@ -13,6 +13,7 @@ interface Props {
     pairs: ReconciledPair[],
     thread: string,
     skipped: string[],
+    warnings: string[],
   ) => void
 }
 
@@ -38,7 +39,7 @@ export default function Source({ thread, onThreadChange, onParsed }: Props) {
       // §5 — a Claude failure comes back as the pattern result plus a note, not
       // an error page. Carry the note through so the desk knows what happened.
       if (parsed.note) setNote(parsed.note)
-      onParsed(parsed.lines, reconciled.pairs, thread, parsed.skipped ?? [])
+      onParsed(parsed.lines, reconciled.pairs, thread, parsed.skipped ?? [], parsed.warnings ?? [])
     } catch (err) {
       setError((err as Error).message)
     } finally {

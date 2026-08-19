@@ -57,6 +57,24 @@ const SKIP_RE =
   /^(thanks|regards|dear|hi\b|on\s|from:|sent:|to:|cc:|subject:|tel|did|cell|please call|sent from my|get outlook|mailto:|disclaimer|confidential|this email|best\b|br\b|--)/i
 
 /**
+ * A mail client's own furniture and the attachment list. "…- 06 Nos.docx" reads
+ * as a quantity of six, so a filename becomes a product unless it is skipped
+ * before the quantity rules ever see it.
+ */
+const CHROME_RE =
+  /^(?:fwd:|re:|contact photo|details plain text|attachments?\b|-{3,}\s*original message|date:|from\s|sent\s)/i
+const ATTACHMENT_RE = /\.(?:docx?|xlsx?|pptx?|pdf|jpe?g|png|gif|zip|rar|csv|msg|eml)\b\s*$/i
+const FILESIZE_RE = /^\(?~?\s*[\d.,]+\s*(?:bytes|kb|mb|gb)\s*\)?$/i
+
+/**
+ * A totals row, not a product. "Total - Rs. 1,11,500 + gst each" carries a
+ * price and so passes every candidate test §5 has — and then prints on the
+ * quotation as a line item called "Total", at the price of the whole order.
+ */
+const SUMMARY_ROW_RE =
+  /^(?:sub\s*total|grand\s*total|net\s*total|total|amount|gst|tax|vat|discount|freight|packing|round\s*off|less)\b/i
+
+/**
  * A sign-off. Everything after one, within the same block, is signature — the
  * company name, the sender's name, the phone list. Those lines are not read as
  * products and never should be, so they must not be reported as "not read"
@@ -218,6 +236,13 @@ export interface ParseOptions {
 export interface ParseResult {
   lines: ParsedLine[]
   /**
+   * Things the desk must decide, which the parser cannot. Chief among them:
+   * a forwarded chain often carries several revisions of the same quotation,
+   * and the newer ones are frequently pasted tables the patterns cannot read.
+   * Returning the oldest price with no comment is the worst possible answer.
+   */
+  warnings: string[]
+  /**
    * Lines with real content that produced no product.
    *
    * The parser silently discarding what it does not understand is how a missed
@@ -237,9 +262,16 @@ export function parseThreadDetailed(thread: string, options: ParseOptions = {}):
   const internalDomain = (options.internalDomain ?? config.internalEmailDomain).toLowerCase()
   const lines: ParsedLine[] = []
   const skipped: string[] = []
+  const warnings: string[] = []
   let counter = 0
 
-  for (const block of splitBlocks(thread)) {
+  const blocks = splitBlocks(thread)
+  /** Index of the message each price came from — 0 is the newest. */
+  const pricedBlocks = new Set<number>()
+  let blockIndex = -1
+
+  for (const block of blocks) {
+    blockIndex += 1
     const senderIsInternal = block.sender.endsWith(`@${internalDomain}`)
     const senderKnown = block.sender !== ''
 
@@ -253,13 +285,44 @@ export function parseThreadDetailed(thread: string, options: ParseOptions = {}):
     let adjacent = false
     let inSignature = false
 
+    /**
+     * Lines directly above the current one that were not products in their own
+     * right. A wrapped description puts the product name here and the quantity
+     * three lines later:
+     *
+     *   HP Pro Tower 280 G9 PCI Desktop PC
+     *   i5-13500/16GB DDR4/512GB SSD/Wi-Fi/MII/Win11Pro/3
+     *   Yrs Onsite Without Monitor ---- 25 nos....
+     *
+     * §5 reads only the last line, so the product came out called "Yrs Onsite
+     * Without Monitor" and its name was thrown away.
+     */
+    let pending: string[] = []
+
+    /** Nothing claimed these; report them rather than drop them. */
+    const flushPending = () => {
+      for (const line of pending) {
+        if (!inSignature && !isObviousNoise(line)) skipped.push(line)
+      }
+      pending = []
+    }
+
     for (const rawLine of block.lines) {
       const raw = rawLine.trim()
       if (SIGNOFF_RE.test(raw)) inSignature = true
 
+      // Client furniture and attachments are dismissed before the quantity
+      // rules run, or "…HP 280 G9 - 25 Nos.docx" becomes a product.
+      if (CHROME_RE.test(raw) || ATTACHMENT_RE.test(raw) || FILESIZE_RE.test(raw)) {
+        flushPending()
+        adjacent = false
+        continue
+      }
+
       if (raw === '' || SKIP_RE.test(raw)) {
         // A blank or a signature ends a specification, but not the product —
         // the quantity often sits a blank line below it.
+        flushPending()
         adjacent = false
         continue
       }
@@ -285,13 +348,19 @@ export function parseThreadDetailed(thread: string, options: ParseOptions = {}):
         const asked = BARE_REQUEST_RE.exec(raw)?.[1]
         const askedFor = asked ? stripTrailingInstruction(cleanDescription(asked)) : ''
         if (askedFor === '') {
-          // Nothing matched. Rather than drop it without trace, keep it so the
-          // reconcile screen can show what went unread.
-          if (!inSignature && !isObviousNoise(raw)) skipped.push(raw)
+          // Nothing matched yet. Hold it: the next line may be the quantity
+          // belonging to a description that wrapped. Only three, so a long
+          // stretch of prose cannot end up glued to a product.
+          if (pending.length >= 3) {
+            const oldest = pending.shift()!
+            if (!inSignature && !isObviousNoise(oldest)) skipped.push(oldest)
+          }
+          pending.push(raw)
           adjacent = false
           continue
         }
 
+        flushPending()
         counter += 1
         const requested: ParsedLine = {
           id: `line-${counter}`,
@@ -342,9 +411,41 @@ export function parseThreadDetailed(thread: string, options: ParseOptions = {}):
           lastItem.qty = qty
           lastItem.raw = `${lastItem.raw}\n${raw}`
         }
+        flushPending()
         adjacent = false
         continue
       }
+
+      // "Total - Rs. 1,11,500 + gst each" carries a price and so satisfies every
+      // candidate test §5 has. It is the sum of the lines above it, and printing
+      // it as a product puts the whole order on the quotation a second time.
+      if (SUMMARY_ROW_RE.test(desc)) {
+        flushPending()
+        adjacent = false
+        continue
+      }
+
+      /**
+       * A description that wrapped: the quantity landed on its last line, so
+       * `desc` is a fragment and the product name is sitting in `pending`.
+       *
+       * The signal is a brand. If a line above names one and this line does
+       * not, the product name is above. Concrete enough not to glue arbitrary
+       * prose onto a product, which would print on a customer's quotation.
+       */
+      let carried: string[] = []
+      if (pending.length > 0 && findMake(raw) === '' && pending.some((l) => findMake(l) !== '')) {
+        const from = pending.findIndex((l) => findMake(l) !== '')
+        carried = pending.slice(from)
+        for (const dropped of pending.slice(0, from)) {
+          if (!inSignature && !isObviousNoise(dropped)) skipped.push(dropped)
+        }
+        pending = []
+        desc = [...carried.map((l) => cleanDescription(l)), desc].filter(Boolean).join('\n')
+      } else {
+        flushPending()
+      }
+
 
       // §5 — "a line carrying a price is an offer; a line with only a quantity
       // is a request."
@@ -357,12 +458,13 @@ export function parseThreadDetailed(thread: string, options: ParseOptions = {}):
         senderKnown && ((role === 'offer' && !senderIsInternal) || (role === 'request' && senderIsInternal))
 
       counter += 1
+      const fullText = carried.length > 0 ? `${carried.join('\n')}\n${raw}` : raw
       const item: ParsedLine = {
         id: `line-${counter}`,
-        raw,
+        raw: fullText,
         desc,
-        make: findMake(raw),
-        partCode: extractPartCode(raw),
+        make: findMake(fullText),
+        partCode: extractPartCode(fullText),
         qty,
         rate,
         role,
@@ -370,12 +472,32 @@ export function parseThreadDetailed(thread: string, options: ParseOptions = {}):
         ...(roleUncertain ? { roleUncertain: true } : {}),
       }
       lines.push(item)
+      if (rate > 0) pricedBlocks.add(blockIndex)
       lastItem = item
       adjacent = true
     }
+
+    flushPending()
   }
 
-  return { lines: dedupeWithinRole(lines), skipped }
+  /**
+   * A forwarded chain runs newest-first, so a price found in message 3 means
+   * two more recent messages said something this parser could not read — very
+   * often a revised price pasted as a table. Quoting a superseded rate is
+   * exactly the silent error this product exists to prevent, so say it out loud
+   * rather than return the old number as though it were current.
+   */
+  const newestPricedBlock = pricedBlocks.size > 0 ? Math.min(...pricedBlocks) : -1
+  if (newestPricedBlock > 0) {
+    warnings.push(
+      `Prices were read from message ${newestPricedBlock + 1} of ${blocks.length} in this thread. ` +
+        `${newestPricedBlock} more recent message${newestPricedBlock === 1 ? '' : 's'} produced no price — ` +
+        `if any of them revised it, these rates are out of date. Prices pasted as a table cannot be read; ` +
+        `check the newest message, or try "Read it with Claude instead".`,
+    )
+  }
+
+  return { lines: dedupeWithinRole(lines), skipped, warnings }
 }
 
 /**

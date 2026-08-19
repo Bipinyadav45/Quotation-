@@ -20,8 +20,8 @@ export const parseRoutes = Router()
  */
 parseRoutes.post('/parse', validateBody(ParseRequestSchema), (req, res) => {
   const { thread } = validated(ParseRequestSchema, req)
-  const { lines, skipped } = parseThreadDetailed(thread)
-  const body: ParseResponse = { lines, source: 'pattern', skipped }
+  const { lines, skipped, warnings } = parseThreadDetailed(thread)
+  const body: ParseResponse = { lines, source: 'pattern', skipped, warnings }
   res.json(body)
 })
 

@@ -98,8 +98,8 @@ convert currencies, or tidy up spelling in "raw".`
 
 export async function parseThreadWithClaude(thread: string): Promise<ParseResponse> {
   const fallback = (note: string): ParseResponse => {
-    const { lines, skipped } = parseThreadDetailed(thread)
-    return { lines, source: 'pattern', note, skipped }
+    const { lines, skipped, warnings } = parseThreadDetailed(thread)
+    return { lines, source: 'pattern', note, skipped, warnings }
   }
 
   if (!config.anthropicApiKey) {
@@ -157,7 +157,7 @@ export async function parseThreadWithClaude(thread: string): Promise<ParseRespon
       }
     })
 
-    return { lines, source: 'llm', skipped: [] }
+    return { lines, source: 'llm', skipped: [], warnings: [] }
   } catch (err) {
     // §5 — "on validation failure, return the pattern-parser result with a note
     // rather than an error page." The same applies to a network blip, a rate

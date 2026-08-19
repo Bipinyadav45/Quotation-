@@ -18,6 +18,8 @@ interface Props {
   stale?: boolean
   /** Lines with content that the parser could not turn into a product. */
   skipped?: string[]
+  /** Judgements the parser cannot make — e.g. the prices may be superseded. */
+  warnings?: string[]
 }
 
 const rowKey = (pair: ReconciledPair) => `${pair.request?.id ?? '-'}|${pair.offer?.id ?? '-'}`
@@ -38,6 +40,7 @@ export default function Reconcile({
   onBack,
   stale = false,
   skipped = [],
+  warnings = [],
 }: Props) {
   const [reviewed, setReviewed] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState(false)
@@ -143,6 +146,12 @@ export default function Reconcile({
           {error}
         </Callout>
       )}
+
+      {warnings.map((warning, i) => (
+        <Callout key={i} tone="problem" label="Check this" className="mb-3">
+          {warning}
+        </Callout>
+      ))}
 
       {skipped.length > 0 && (
         <details className="mb-3 border border-drift-rule bg-drift-bg text-[12.5px] text-drift no-print">

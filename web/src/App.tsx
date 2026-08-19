@@ -84,6 +84,8 @@ export default function App() {
   const [parsedThread, setParsedThread] = useState('')
   /** Lines the parser could not read as products — shown, never dropped. */
   const [skipped, setSkipped] = useState<string[]>([])
+  /** Judgements the parser cannot make for the desk — e.g. a superseded price. */
+  const [warnings, setWarnings] = useState<string[]>([])
 
   /**
    * Now that the stepper lets you jump back to the thread, edit it, and jump
@@ -111,6 +113,7 @@ export default function App() {
     setLines([])
     setPairs([])
     setSkipped([])
+    setWarnings([])
     setDraft(null)
     setSaved(null)
     setScreen('source')
@@ -170,12 +173,13 @@ export default function App() {
           <Source
             thread={thread}
             onThreadChange={setThread}
-            onParsed={(nextLines, nextPairs, usedThread, notRead) => {
+            onParsed={(nextLines, nextPairs, usedThread, notRead, notes) => {
               setLines(nextLines)
               setPairs(nextPairs)
               setThread(usedThread)
               setParsedThread(usedThread)
               setSkipped(notRead)
+              setWarnings(notes)
               setScreen('reconcile')
             }}
           />
@@ -191,6 +195,7 @@ export default function App() {
             }}
             stale={reconciliationStale}
             skipped={skipped}
+            warnings={warnings}
             onBuild={(items) => {
               setDraft(newDraft(items))
               setScreen('editor')

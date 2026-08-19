@@ -441,3 +441,128 @@ describe('what the parser could not read is reported, never dropped', () => {
     expect(skipped).toEqual([])
   })
 })
+
+/**
+ * A forwarded chain out of the desk's mailbox. It carries an attachment, mail
+ * client furniture, totals rows, wrapped product descriptions, and — the part a
+ * pattern parser cannot solve — four revisions of the same quotation at four
+ * different prices.
+ */
+const DGSL_THREAD = [
+  'Fwd: Re: quote - Revised',
+  'Contact photo',
+  'From purchase1@newtech.co.in on 2026-08-18 17:39',
+  'Details Plain text',
+  'Quotation-DGSL(Pondicherry) 23rd June 2026 -- HP ProBook - 06 Nos. & HP 280 G9 - 25 Nos.docx',
+  '(~57 KB)',
+  '18th August 2026.',
+  '',
+  'Dear Rohit',
+  '',
+  '-------- Original Message --------',
+  'Subject:	Re: quote - Revised',
+  'Date:	23/06/2026 12:22 PM',
+  '',
+  'On Wed, Jun 17, 2026 at 4:09 PM rakhi gupte <rakhi.gupte@newtech.in> wrote:',
+  '',
+  'Dear Sir,',
+  '',
+  'Please find details below -',
+  '',
+  'HP ProBook 4 G1iR 14 Notebook Probook/440 G11- Rs. 1,04,500 + gst each',
+  'U5-125U/16GB/1TB SSD/FHD 300 Nits/BLK/FPR/MII/Win 11 Pro/1 Yr Onsite/ Bag',
+  '3 Years NBD and 3 Years ADP - Rs. 7,000 + gst each additional',
+  'Total - Rs. 1,11,500 + gst each ( with 3 Year Onsite + ADP)',
+  '',
+  'HP 280 G9 MT ( MII ) - Rs. 83,000 + gst each',
+  'Core i5-14500,  8GB DDR5, 512GB SSD,  Wi-Fi, Onboard, , Win 11 Pro., 3 Years Warranty.',
+  'Additional 8GB HP Memory - Rs. 12,500 + gst each',
+  'Total - Rs. 95,500 + gst each with 16GB Memory',
+  '',
+  'On Mon, Jun 15, 2026 at 1:41 PM Alex Abraham <alex.abraham@datamatics.com> wrote:',
+  '',
+  'Share quote for the below',
+  '',
+  'HP Pro Tower 280 G9 PCI Desktop PC',
+  'i5-13500/16GB DDR4/512GB SSD/Wi-Fi/MII/Win11Pro/3',
+  'Yrs Onsite Without Monitor ---- 25 nos....',
+  '',
+  'HP ProBook 440 14 inch G11 Notebook PC',
+  'ProBook/440 G11/U5-125U/16GB/1TB SSD/FHD 300',
+  'Nits/BLK/FPR/MII/Win 11 Pro/3 Yr Onsite with ADP  -- 6 nos',
+].join('\n')
+
+describe('a forwarded chain with an attachment, totals rows and wrapped descriptions', () => {
+  const { lines, skipped } = parseThreadDetailed(DGSL_THREAD)
+  const offers = lines.filter((l) => l.role === 'offer')
+  const requests = lines.filter((l) => l.role === 'request')
+
+  it('never turns the attachment filename into a product', () => {
+    // "...HP 280 G9 - 25 Nos.docx" reads as a quantity of 25.
+    for (const line of lines) {
+      expect(line.desc).not.toContain('.docx')
+      expect(line.desc).not.toContain('Quotation-DGSL')
+    }
+  })
+
+  it('never turns a totals row into a product', () => {
+    // "Total - Rs. 1,11,500 + gst each" would print the whole order as a line.
+    for (const line of lines) {
+      expect(line.desc.split('\n')[0]!.trim()).not.toMatch(/^total\b/i)
+    }
+    expect(offers.map((o) => o.rate)).not.toContain(11_150_000)
+    expect(offers.map((o) => o.rate)).not.toContain(9_550_000)
+  })
+
+  it('keeps the product name when the description wrapped over three lines', () => {
+    // The quantity landed on the last line of a wrapped description, so §5
+    // named the product "Yrs Onsite Without Monitor" and threw the rest away.
+    const desktop = requests.find((r) => r.qty === 25)
+    expect(desktop?.desc.split('\n')[0]).toBe('HP Pro Tower 280 G9 PCI Desktop PC')
+    expect(desktop?.desc).toContain('i5-13500/16GB DDR4/512GB SSD')
+
+    const laptop = requests.find((r) => r.qty === 6)
+    expect(laptop?.desc.split('\n')[0]).toBe('HP ProBook 440 14 inch G11 Notebook PC')
+  })
+
+  it('reads the four priced products the 17 June message actually lists', () => {
+    expect(offers.map((o) => o.desc.split('\n')[0])).toEqual([
+      'HP ProBook 4 G1iR 14 Notebook Probook/440 G11',
+      '3 Years NBD and 3 Years ADP',
+      'HP 280 G9 MT ( MII )',
+      'Additional 8GB HP Memory',
+    ])
+    expect(offers.map((o) => o.rate)).toEqual([10_450_000, 700_000, 8_300_000, 1_250_000])
+  })
+
+  it('does not report mail client furniture as unread', () => {
+    const joined = skipped.join(' | ')
+    for (const chrome of [
+      'Contact photo',
+      'Details Plain text',
+      '(~57 KB)',
+      'Original Message',
+      'Fwd:',
+      'Quotation-DGSL',
+    ]) {
+      expect(joined, `"${chrome}" should not be reported`).not.toContain(chrome)
+    }
+  })
+})
+
+describe('a thread carrying several revisions of the same quotation', () => {
+  it('says plainly that the prices came from a superseded message', () => {
+    const { warnings } = parseThreadDetailed(DGSL_THREAD)
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toMatch(/more recent message/i)
+    expect(warnings[0]).toMatch(/out of date/i)
+    // The reason those messages produced nothing: their prices are in a pasted
+    // table, which a line-based parser cannot reconstruct.
+    expect(warnings[0]).toMatch(/table/i)
+  })
+
+  it('says nothing when the prices come from the newest message', () => {
+    const { warnings } = parseThreadDetailed(SAMPLE_THREAD)
+    expect(warnings).toEqual([])
+  })
+})
