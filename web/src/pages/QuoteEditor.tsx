@@ -3,8 +3,9 @@ import type { Quote } from '@shared/schema'
 import { amountInWords, computeTotals, formatPaise, pad2, parseRupeesToPaise } from '@shared/money'
 import { formatDateLong, fromISODate } from '@shared/fy'
 import { INDIAN_STATES, taxModeForState } from '@shared/states'
-import { apiPost } from '../lib/api'
+import { apiDownload, apiPost, useApi } from '../lib/api'
 import Callout from '../components/Callout'
+import DocumentPreview, { type DocumentData } from '../components/DocumentPreview'
 import ScreenHeader from '../components/ScreenHeader'
 
 export interface EditorItem {
@@ -45,7 +46,11 @@ interface Props {
   warnings?: string[]
   /** The thread has been edited since these lines were read from it. */
   stale?: boolean
+  /** Set once this quotation has a reference; unlocks the downloads. */
+  saved: Quote | null
   onSaved: (quote: Quote) => void
+  onRevise: () => void
+  onStartNew: () => void
   onBack: () => void
 }
 
@@ -57,13 +62,66 @@ export default function QuoteEditor({
   skipped = [],
   warnings = [],
   stale = false,
+  saved,
   onSaved,
+  onRevise,
+  onStartNew,
   onBack,
 }: Props) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [nextSeq, setNextSeq] = useState<number | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [message, setMessage] = useState<{ tone: 'help' | 'problem'; text: string } | null>(null)
+  const [status, setStatus] = useState<Quote['status']>(saved?.status ?? 'draft')
   const dragFrom = useRef<number | null>(null)
+
+  const health = useApi<{ checks: Record<string, { ok: boolean; detail: string }> }>('/api/health')
+  const pdfReady = health.data?.checks.pdf?.ok ?? false
+  const pdfDetail = health.data?.checks.pdf?.detail ?? ''
+
+  /**
+   * The document, rebuilt from the form on every keystroke. This is the whole
+   * reason the two screens are one: a change to a rate or a line order shows up
+   * in the quotation as you make it, not after a save and a page change.
+   */
+  const preview: DocumentData = {
+    ref: saved?.ref ?? '',
+    revision: saved?.revision ?? 0,
+    date: draft.date,
+    customer: {
+      name: draft.customer.name,
+      address: draft.customer.address,
+      attention: draft.customer.attention,
+    },
+    contact: draft.contact,
+    email: draft.email,
+    signatory: draft.signatory,
+    items: draft.items.map((i) => ({ desc: i.desc, make: i.make, qty: i.qty, rate: i.rate })),
+    tax: draft.tax,
+    terms: draft.terms,
+  }
+
+  async function download(kind: 'docx' | 'pdf') {
+    if (!saved) return
+    setBusy(kind)
+    setMessage(null)
+    try {
+      await apiDownload(`/api/render/${kind}`, { quoteId: saved.id })
+    } catch (err) {
+      setMessage({ tone: 'problem', text: (err as Error).message })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function setQuoteStatus(next: Quote['status']) {
+    if (!saved) return
+    setStatus(next)
+    await apiPost(`/api/quotes/${saved.id}/status`, { status: next }).catch(() =>
+      setMessage({ tone: 'problem', text: 'Could not save that status.' }),
+    )
+  }
 
   const totals = useMemo(
     () => computeTotals(draft.items, draft.tax.mode, draft.tax.rate),
@@ -149,7 +207,12 @@ export default function QuoteEditor({
         title="Quotation"
         purpose="These lines came straight from the thread. Check every one against what the customer actually asked for, then save. The reference number is taken at the moment you save, not before."
         right={
-          draft.reviseOf ? (
+          saved ? (
+            <span className="label no-print">
+              saved as <span className="ref text-ink">{saved.ref}</span>
+              {saved.revision > 0 && ` (Rev ${saved.revision})`}
+            </span>
+          ) : draft.reviseOf ? (
             <span className="label no-print">
               revision of <span className="ref text-ink">{draft.reviseOfRef}</span>
               <span className="mx-1.5 text-rule-strong">·</span>
@@ -196,6 +259,11 @@ export default function QuoteEditor({
           </ul>
         </details>
       )}
+
+      {/* Form on the left, the quotation itself on the right, updating as you
+          type. Stacks on a narrow screen so nothing is cut off. */}
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,600px)]">
+        <div className="min-w-0">
 
       {/* Says the convention once, rather than leaving it to be discovered by
           clicking things to see which ones respond. */}
@@ -524,6 +592,91 @@ export default function QuoteEditor({
         </div>
       </div>
 
+        </div>
+
+        {/* The document. Sticky, so it stays in view while the form scrolls. */}
+        <div className="min-w-0 xl:sticky xl:top-4 xl:self-start">
+          <div className="mb-1.5 flex items-baseline justify-between">
+            <h3 className="label">Document</h3>
+            <span className="text-[11px] text-ink-faint no-print">
+              {saved ? 'saved — downloads below' : 'updates as you type · save to download'}
+            </span>
+          </div>
+
+          <DocumentPreview
+            data={preview}
+            pendingRef={`NCS/…/${draft.initials.toUpperCase()}/${
+              nextSeq === null ? '???' : String(nextSeq).padStart(3, '0')
+            }`}
+          />
+
+          <div className="mt-3 flex flex-wrap items-center gap-2 no-print">
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => download('docx')}
+              disabled={!saved || busy !== null}
+              title={saved ? 'The editable Word file, on the letterhead' : 'Save it first'}
+            >
+              {busy === 'docx' ? 'Building…' : 'Download Word'}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => download('pdf')}
+              disabled={!saved || busy !== null || !pdfReady}
+              title={!saved ? 'Save it first' : pdfReady ? 'Converted from the same Word file' : pdfDetail}
+            >
+              {busy === 'pdf' ? 'Converting…' : 'Download PDF'}
+            </button>
+
+            {saved && (
+              <>
+                <span className="grow" />
+                <span className="label">Status</span>
+                <select
+                  value={status}
+                  onChange={(e) => setQuoteStatus(e.target.value as Quote['status'])}
+                  className="border border-rule bg-paper-raised px-2 py-1 text-[12px]"
+                >
+                  <option value="draft">Draft</option>
+                  <option value="sent">Sent</option>
+                  <option value="won">Won</option>
+                  <option value="lost">Lost</option>
+                </select>
+              </>
+            )}
+          </div>
+
+          {saved && (
+            <div className="mt-2 flex flex-wrap gap-2 no-print">
+              <button type="button" className="btn px-2 py-0.5 text-[12px]" onClick={onRevise}>
+                Revise
+              </button>
+              <button type="button" className="btn px-2 py-0.5 text-[12px]" onClick={onStartNew}>
+                New quotation
+              </button>
+            </div>
+          )}
+
+          {!pdfReady && health.data && (
+            <Callout className="mt-2 no-print" label="PDF is off">
+              {pdfDetail} The Word download is unaffected — open it and save as PDF from there.
+            </Callout>
+          )}
+
+          {message && (
+            <Callout
+              tone={message.tone}
+              label={message.tone === 'problem' ? 'Problem' : undefined}
+              className="mt-2 no-print"
+            >
+              {message.text}
+            </Callout>
+          )}
+        </div>
+      </div>
+
       {/* Say what is missing, rather than disabling the button and leaving the
           reader to work out why. */}
       {blockers.length > 0 && (
@@ -549,8 +702,17 @@ export default function QuoteEditor({
           className="btn btn-primary"
           onClick={save}
           disabled={saving || blockers.length > 0}
+          title={
+            saved
+              ? 'This already has a reference — saving again takes a new one'
+              : 'Takes the next reference number in the series'
+          }
         >
-          {saving ? 'Saving…' : 'Save and take a reference'}
+          {saving
+            ? 'Saving…'
+            : saved
+              ? 'Save again as a new quotation'
+              : 'Save and take a reference'}
         </button>
       </div>
 

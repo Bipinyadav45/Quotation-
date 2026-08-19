@@ -8,20 +8,20 @@ import { taxModeForState } from '@shared/states'
 import Source from './pages/Source'
 import QuoteEditor, { type EditorItem, type QuoteDraft } from './pages/QuoteEditor'
 import Stepper from './components/Stepper'
-import Preview from './pages/Preview'
 import History from './pages/History'
 
-type Screen = 'source' | 'editor' | 'document' | 'history'
+type Screen = 'source' | 'editor' | 'history'
 
 /**
- * The three steps a quotation passes through. History is not among them — it is
+ * The two steps a quotation passes through — the document is no longer one of
+ * them. It sits beside the form and updates as you type, so "edit" and "see the
+ * result" stopped being separate places to be. History is not among them — it is
  * somewhere you go, not a stage you complete, and putting it in the sequence
  * would imply a quotation is unfinished until you have visited it.
  */
 const FLOW: Array<{ screen: Screen; label: string; locked: string }> = [
   { screen: 'source', label: 'Email thread', locked: '' },
   { screen: 'editor', label: 'Quotation', locked: 'Read a thread first' },
-  { screen: 'document', label: 'Document', locked: 'Save the quotation first' },
 ]
 
 
@@ -96,13 +96,12 @@ export default function App() {
   const reached: Record<Screen, boolean> = {
     source: true,
     editor: draft !== null,
-    document: saved !== null,
     history: true,
   }
 
   // How far through the flow this quotation has got, so the stepper can fill
   // its track rather than only showing what happens to be clickable.
-  const progress = saved !== null ? 2 : draft !== null ? 1 : 0
+  const progress = draft !== null ? 1 : 0
   const activeStep = FLOW.findIndex((s) => s.screen === screen)
 
   function startNew() {
@@ -163,7 +162,9 @@ export default function App() {
 
       {/* The app's one content column. Screens do not set their own width —
           otherwise they disagree and the layout jumps as you move between them. */}
-      <main className="mx-auto max-w-6xl px-6 py-6">
+      <main
+        className={`mx-auto px-6 py-6 ${screen === 'editor' ? 'max-w-[1700px]' : 'max-w-6xl'}`}
+      >
         {screen === 'source' && (
           <Source
             thread={thread}
@@ -185,6 +186,7 @@ export default function App() {
                   : []),
               ])
               setDraft(newDraft(items))
+              setSaved(null)
               setScreen('editor')
             }}
           />
@@ -199,34 +201,38 @@ export default function App() {
             skipped={skipped}
             warnings={warnings}
             stale={draftStale}
-            onSaved={(quote) => {
-              setSaved(quote)
-              setScreen('document')
+            saved={saved}
+            onSaved={setSaved}
+            onRevise={() => {
+              if (!saved) return
+              setDraft(draftFromQuote(saved, true))
+              setSaved(null)
             }}
+            onStartNew={startNew}
             onBack={() => setScreen('source')}
           />
         )}
 
-        {screen === 'document' && saved && (
-          <Preview
-            quote={saved}
-            onRevise={() => {
-              setDraft(draftFromQuote(saved, true))
-              setScreen('editor')
-            }}
-            onStartNew={startNew}
-          />
-        )}
 
         {screen === 'history' && (
           <History
             onOpen={(quote) => {
+              // Opening a past quotation lands in the same one screen, with its
+              // document beside it and its downloads live.
               setSaved(quote)
               setThread(quote.sourceThread)
-              setScreen('document')
+              setParsedThread(quote.sourceThread)
+              setSkipped([])
+              setWarnings([])
+              setDraft(draftFromQuote(quote, false))
+              setScreen('editor')
             }}
             onClone={(quote) => {
               setThread(quote.sourceThread)
+              setParsedThread(quote.sourceThread)
+              setSaved(null)
+              setSkipped([])
+              setWarnings([])
               setDraft(draftFromQuote(quote, true))
               setScreen('editor')
             }}

@@ -1,7 +1,10 @@
 # Newtech Quotation Desk
 
 Turns a customer RFQ email thread into a quotation on Newtech letterhead. Paste the thread,
-check the lines it found, save, download.
+check the lines it found beside a live preview of the document, save, download.
+
+Two steps: **Email thread → Quotation**. The document is not a third — it sits beside the form
+and redraws as you type, so editing and seeing the result are not separate places to be.
 
 > **The ask-vs-quote comparison was removed at the desk's request** (19 August 2026). PROMPT.md
 > §1 calls it "the point of the product": it paired each request against each offer and flagged
@@ -64,7 +67,7 @@ Force one with `PDF_BACKEND=libreoffice|word` in `.env`, or point at an unusual 
 ```
 shared/     the one contract — §4 as Zod, money, financial year, company details
 server/     Express, SQLite, the parser, document generation
-web/        React, four screens
+web/        React, three screens
 ```
 
 `shared/` is imported by both sides through the `@shared/*` path alias. §4's data model is
