@@ -158,6 +158,26 @@ export const SaveQuoteRequestSchema = z.object({
 })
 export type SaveQuoteRequest = z.infer<typeof SaveQuoteRequestSchema>
 
+/**
+ * A remembered customer. Built from saved quotations rather than typed into a
+ * screen of its own — see server/src/lib/customers.ts.
+ */
+export const CustomerRecordSchema = CustomerSchema.extend({
+  id: z.string(),
+  gstin: z.string(),
+  state: z.string(),
+  /** Our contact and email as used for this customer. */
+  contact: z.string(),
+  email: z.string(),
+  quoteCount: z.number().int(),
+  lastUsedAt: z.string(),
+})
+export type CustomerRecord = z.infer<typeof CustomerRecordSchema>
+
+export const CustomerSearchResponseSchema = z.object({
+  customers: z.array(CustomerRecordSchema),
+})
+
 /** One row of the History table (§9 screen 5). */
 export const QuoteSummarySchema = z.object({
   id: z.string(),

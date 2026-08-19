@@ -5,6 +5,7 @@ import { formatDateLong, fromISODate } from '@shared/fy'
 import { INDIAN_STATES, taxModeForState } from '@shared/states'
 import { apiDownload, apiPost, useApi } from '../lib/api'
 import Callout from '../components/Callout'
+import CustomerField from '../components/CustomerField'
 import DocumentPreview, { type DocumentData } from '../components/DocumentPreview'
 import ScreenHeader from '../components/ScreenHeader'
 
@@ -74,6 +75,8 @@ export default function QuoteEditor({
   const [busy, setBusy] = useState<string | null>(null)
   const [message, setMessage] = useState<{ tone: 'help' | 'problem'; text: string } | null>(null)
   const [status, setStatus] = useState<Quote['status']>(saved?.status ?? 'draft')
+  /** Name of the stored customer whose details were filled in, for attribution. */
+  const [filledFrom, setFilledFrom] = useState<string | null>(null)
   const dragFrom = useRef<number | null>(null)
 
   const health = useApi<{ checks: Record<string, { ok: boolean; detail: string }> }>('/api/health')
@@ -310,11 +313,37 @@ export default function QuoteEditor({
         </Field>
 
         <Field label="Customer" span={2}>
-          <input
+          <CustomerField
             value={draft.customer.name}
-            onChange={(e) => set({ customer: { ...draft.customer, name: e.target.value } })}
+            onChange={(name) => {
+              setFilledFrom(null)
+              set({ customer: { ...draft.customer, name } })
+            }}
+            onPick={(customer) => {
+              // One click instead of six fields — and the GSTIN can no longer
+              // be retyped wrong.
+              setFilledFrom(customer.name)
+              onDraftChange({
+                ...draft,
+                customer: {
+                  name: customer.name,
+                  address: customer.address,
+                  attention: customer.attention,
+                  gstin: customer.gstin,
+                  state: customer.state,
+                },
+                contact: customer.contact || draft.contact,
+                email: customer.email || draft.email,
+                tax: { ...draft.tax, mode: taxModeForState(customer.state) },
+              })
+            }}
             className={inputClass}
           />
+          {filledFrom && (
+            <p className="mt-1 text-[11px] text-ink-faint">
+              filled from your customer list · edit anything and the change is remembered on save
+            </p>
+          )}
         </Field>
 
         <Field label="Kind attention">

@@ -12,6 +12,8 @@ import { validateBody, validated } from '../middleware/validate.js'
 import { getDb } from '../db/client.js'
 import { allocateRef, peekNextSeq } from '../lib/refno.js'
 import { loadMakes } from '../lib/makes.js'
+import { rememberCustomer, searchCustomers } from '../lib/customers.js'
+import { z } from 'zod'
 
 export const quoteRoutes = Router()
 
@@ -22,11 +24,48 @@ quoteRoutes.get('/makes', (_req, res) => {
   })
 })
 
-/** Preview only — deliberately does NOT take a number (§7). */
+/**
+ * Preview only — deliberately does NOT take a number (§7).
+ *
+ * The query is validated rather than coerced. It was reading `req.query`
+ * straight through, which meant `?date=nonsense` reached `fromISODate` and came
+ * back as an Invalid Date, and the financial year computed off it was garbage.
+ */
+const NextRefQuerySchema = z.object({
+  initials: z.string().trim().min(1).max(4).default('RG'),
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD')
+    .optional(),
+})
+
 quoteRoutes.get('/next-ref', (req, res) => {
-  const initials = String(req.query.initials ?? 'RG')
-  const date = typeof req.query.date === 'string' ? fromISODate(req.query.date) : new Date()
-  res.json({ nextSeq: peekNextSeq(getDb(), date, initials) })
+  const parsed = NextRefQuerySchema.safeParse(req.query)
+  if (!parsed.success) {
+    res.status(400).json({
+      error: 'Invalid query',
+      issues: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+    })
+    return
+  }
+
+  const { initials, date } = parsed.data
+  res.json({ nextSeq: peekNextSeq(getDb(), date ? fromISODate(date) : new Date(), initials) })
+})
+
+/** Typeahead for the Customer field. Empty query returns the most recent. */
+const CustomerSearchQuerySchema = z.object({
+  q: z.string().max(120).default(''),
+  limit: z.coerce.number().int().min(1).max(25).default(8),
+})
+
+quoteRoutes.get('/customers', (req, res) => {
+  const parsed = CustomerSearchQuerySchema.safeParse(req.query)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid query' })
+    return
+  }
+  res.json({ customers: searchCustomers(parsed.data.q, parsed.data.limit) })
 })
 
 quoteRoutes.post('/quote', validateBody(SaveQuoteRequestSchema), (req, res) => {
@@ -106,6 +145,18 @@ quoteRoutes.post('/quote', validateBody(SaveQuoteRequestSchema), (req, res) => {
       total: totals.total,
       sourceThread: input.sourceThread,
       now,
+    })
+
+    // The customer master builds itself from real use. Inside the transaction,
+    // so a quotation and the customer it taught us about commit together.
+    rememberCustomer(db, {
+      name: input.customer.name,
+      address: input.customer.address,
+      attention: input.customer.attention,
+      gstin: input.customer.gstin,
+      state: input.customer.state,
+      contact: input.contact,
+      email: input.email,
     })
 
     const insertItem = db.prepare(
