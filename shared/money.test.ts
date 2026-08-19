@@ -95,7 +95,8 @@ describe('computeTotals — §7 rounding rule', () => {
     expect(formatPaise(totals.sub)).toBe('11,500.00')
     expect(formatPaise(totals.tax)).toBe('2,070.00')
     expect(formatPaise(totals.total)).toBe('13,570.00')
-    expect(totals.taxRows).toEqual([{ label: 'IGST 18%', paise: 207_000 }])
+    // The letterhead says "GST 18%"; that is the word the document uses.
+    expect(totals.taxRows).toEqual([{ label: 'GST 18%', paise: 207_000 }])
   })
 
   it('splits into two rows for an in-state customer', () => {

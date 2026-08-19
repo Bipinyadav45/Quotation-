@@ -161,7 +161,17 @@ export function computeTotals(
             { label: `SGST ${formatPercent(half)}%`, paise: each },
           ]
         })()
-      : [{ label: `IGST ${formatPercent(ratePercent)}%`, paise: Math.round((sub * ratePercent) / 100) }]
+      : [
+          {
+            // The letterhead's own word is "GST 18%", so that is what a
+            // single-row quotation says. §7 wanted "IGST" for an out-of-state
+            // buyer, and that is arguably more correct — but both documents the
+            // desk supplied say GST, and the instruction is to reproduce them.
+            // One string, here, if that is ever revisited.
+            label: `GST ${formatPercent(ratePercent)}%`,
+            paise: Math.round((sub * ratePercent) / 100),
+          },
+        ]
 
   const tax = taxRows.reduce((acc, row) => acc + row.paise, 0)
   return { sub, taxRows, tax, total: sub + tax }

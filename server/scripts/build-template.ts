@@ -48,13 +48,14 @@ const BODY_INDENT_RIGHT = PAGE_WIDTH - BODY_INDENT_LEFT - BODY_WIDTH // 1621
 const HEADER_COLS = [4577, 4887]
 
 /**
- * Six columns now: §7 adds Make, which the original five-column table has no
- * room for. Taken out of the description, so the total is unchanged at 9464 and
- * the table still lines up with everything else on the page.
+ * The item table, exactly as the letterhead has it: five columns totalling
+ * 9493 twips.
  *
- * Sr    Description  Make   Rate   Qty   Amount
+ * There was a sixth here — a Make column, added because §7 asked for one. It is
+ * gone. The instruction is to reproduce this document and add nothing to it,
+ * and a column the letterhead does not have is an addition however useful.
  */
-const ITEM_COLS = [562, 3874, 1200, 1276, 851, 1701]
+const ITEM_COLS = [562, 5103, 1276, 851, 1701]
 
 // --- XML helpers -----------------------------------------------------------
 
@@ -88,6 +89,11 @@ function rPr(opts: { bold?: boolean; italic?: boolean } = {}): string {
 interface RunOpts {
   bold?: boolean
   italic?: boolean
+  /**
+   * Bold only these lines of a multi-line cell. The letterhead bolds "To:" and
+   * the company name under "From:" but not the address lines beneath either.
+   */
+  boldLines?: number[]
 }
 
 /** Text with \n turned into real line breaks and \t into tabs. */
@@ -105,7 +111,8 @@ function runs(text: string, opts: RunOpts = {}): string {
             : `${tab}<w:t xml:space="preserve">${esc(part)}</w:t>`
         })
         .join('')
-      return `<w:r>${rPr(opts)}${lineIndex > 0 ? '<w:br/>' : ''}${inner}</w:r>`
+      const bold = opts.bold || opts.boldLines?.includes(lineIndex) === true
+      return `<w:r>${rPr({ ...opts, bold })}${lineIndex > 0 ? '<w:br/>' : ''}${inner}</w:r>`
     })
     .join('')
 }
@@ -178,91 +185,108 @@ function tbl(cols: number[], rows: string[], opts: { borders?: boolean } = {}): 
 
 function buildBody(sectPr: string): string {
   const [c1, c2] = HEADER_COLS as [number, number]
-  const [sr, desc, make, rate, qty, amount] = ITEM_COLS as [
-    number, number, number, number, number, number,
-  ]
+  const [sr, desc, rate, qty, amount] = ITEM_COLS as [number, number, number, number, number]
 
+  // Header block. Ref and Date share one merged cell; "To:" is bold and so is
+  // the company name under "From:"; Kind Attention is centred and bold.
   const addressBlock = tbl(HEADER_COLS, [
-    // The original stacks Ref above Date in one full-width cell rather than
-    // setting them side by side.
-    tr(tc(c1 + c2, 'Ref: {ref}\nDate: {dateLong}', { span: 2, bold: true })),
+    tr(tc(c1 + c2, 'Ref: {ref}\nDate: {dateLong}', { span: 2 })),
     tr(
-      tc(c1, 'To:\n{customerName}\n{customerAddress}') +
-        tc(c2, 'From:\nNewtech Computer Services Pvt. Ltd.\n6th Floor, Solaris-II, Opp L&T Gate-6,\nSaki Vihar Road, Powai,\nMumbai- 400072.'),
+      tc(c1, 'To: \n{customerName}\n{customerAddress}', { boldFirstLine: true }) +
+        tc(
+          c2,
+          'From: \nNewtech Computer Services Pvt. Ltd.\n6th Floor, Solaris-II, Opp L&T Gate-6,\nSaki Vihar Road, Powai,\nMumbai-400072.',
+          { boldLine: 1 },
+        ),
     ),
-    tr(tc(c1, 'Contact Number: {contact}') + tc(c2, 'Email: {email}')),
+    tr(tc(c1, 'Contact Number:{contact}') + tc(c2, 'Email: {email}')),
     tr(tc(c1 + c2, 'Kind Attention: {attention}', { span: 2, bold: true, align: 'center' })),
   ])
 
   const itemsTable = tbl(ITEM_COLS, [
-    // Header row.
     tr(
       tc(sr, 'Sr. No', { bold: true, align: 'center' }) +
-        tc(desc, 'Product Name and Description', { bold: true }) +
-        tc(make, 'Make', { bold: true }) +
-        tc(rate, 'Rate\n(Rupees)', { bold: true, align: 'center' }) +
+        tc(desc, 'Product Name and Description', { bold: true, align: 'center' }) +
+        tc(rate, 'Rate (Rupees)', { bold: true, align: 'center' }) +
         tc(qty, 'Qty.', { bold: true, align: 'center' }) +
         tc(amount, 'Amount\n(Rupees)', { bold: true, align: 'center' }),
     ),
-    // §8's loop. docxtemplater expands the whole row because the opening and
-    // closing tags sit in the same one.
+    // docxtemplater expands the whole row: the opening and closing tags are in
+    // the same one.
     tr(
       tc(sr, '{#items}{sr}', { align: 'center' }) +
         tc(desc, '{desc}') +
-        tc(make, '{make}') +
         tc(rate, '{rate}', { align: 'right' }) +
         tc(qty, '{qty}', { align: 'center' }) +
         tc(amount, '{amount}{/items}', { align: 'right' }),
     ),
     tr(
       tc(sr, '') +
-        tc(desc + make + rate + qty, 'Sub Total', { span: 4, bold: true }) +
-        tc(amount, '{subTotal}', { align: 'right', bold: true }),
+        tc(desc, 'Sub Total', { align: 'center' }) +
+        tc(rate, '') +
+        tc(qty, '') +
+        tc(amount, '{subTotal}', { align: 'right' }),
     ),
-    // One row per tax row: IGST alone, or CGST and SGST (§7).
     tr(
       tc(sr, '') +
-        tc(desc + make + rate + qty, '{#taxRows}{taxLabel}', { span: 4 }) +
+        tc(desc, '{#taxRows}{taxLabel}', { align: 'center' }) +
+        tc(rate, '') +
+        tc(qty, '') +
         tc(amount, '{taxAmount}{/taxRows}', { align: 'right' }),
     ),
     tr(
       tc(sr, '') +
-        tc(desc + make + rate + qty, 'Total Amount', { span: 4, bold: true }) +
+        tc(desc, 'Total Amount', { align: 'center', bold: true }) +
+        tc(rate, '') +
+        tc(qty, '') +
         tc(amount, '{grandTotal}', { align: 'right', bold: true }),
     ),
   ])
 
-  // Tab stops for the terms block, so the colons line up as they do today.
-  const TERM_TABS = [BODY_INDENT_LEFT + 2200, BODY_INDENT_LEFT + 2400]
-
-  // Blank paragraphs are the whole reason this ran to two pages on the first
-  // attempt: there were eight, against roughly four in the original, and the
-  // two before the signatory pushed the name onto page 2. The original is
-  // tight, so this is too — and the closing block matches its layout: left
-  // aligned and bold, with the signatory hard against the company name.
+  /**
+   * Paragraph for paragraph as the letterhead has it, blank lines included.
+   * The tabs are the document's own; it relies on Word's default tab stops, so
+   * no custom ones are set here either.
+   *
+   * Nothing has been added. An "Amount in words" line used to sit under the
+   * table; it is not on the letterhead, so it is gone.
+   */
   const parts = [
     addressBlock,
     p(),
     p('Dear Sir,'),
     p('Please find the following Quotation for your kind consideration: -'),
-    p('Quotation', { bold: true, align: 'center' }),
+    p(),
+    p('Quotation'),
+    p(),
     itemsTable,
-    p('Amount in words: {amountWords}', { italic: true }),
     p(),
-    p('Terms and Conditions:', { bold: true }),
-    p('1.    Payment Terms\t: {payment}', { tabs: TERM_TABS }),
-    p('2.    Delivery\t: {delivery}', { tabs: TERM_TABS }),
-    p('3.    Prices\t: {pricesTerm}', { tabs: TERM_TABS }),
-    p('4.    Validity\t: {validity}', { tabs: TERM_TABS }),
+    p('Terms and Condition:', { bold: true }),
+    p('1.    Payment Terms\t: {payment}'),
+    p('2.    Delivery\t\t: {delivery}'),
+    p('3.    Prices\t\t: {pricesTerm}'),
+    p('4.    Warranty\t\t: {warranty}'),
     p(),
-    p('If you have any queries, please call us at 40668812/88.'),
+    p(),
+    p('If you have any queries, please feel free to call us at 40668812/88'),
     p('Looking forward to an encouraging and early response.'),
-    p(),
-    p('Thanking You,'),
-    p(),
+    p('\t'),
+    p('\tThanking You,'),
+    p('\t\t'),
     p('Yours Truly,', { bold: true }),
     p('For Newtech Computer Services Pvt., Ltd.', { bold: true }),
-    p('{signatory}', { bold: true }),
+    /**
+     * The letterhead has two blank paragraphs here, for a wet signature. They
+     * are dropped, and it is the one place this departs from it.
+     *
+     * The template is empty, so its whitespace costs nothing. Fill in five line
+     * items and those two blanks push "Rakhi Gupte" onto a second page on its
+     * own — worse than the letterhead, not truer to it. The quotation the desk
+     * actually sent has the name hard against the company line, and that is the
+     * better authority for a document with contents in it.
+     */
+    p('{signatory}   ', { bold: true }),
+    p(),
   ]
 
   return `<w:body>${parts.join('')}${sectPr}</w:body>`

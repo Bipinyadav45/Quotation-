@@ -1,5 +1,5 @@
 import { COMPANY } from '@shared/company'
-import { amountInWords, computeTotals, formatPaise, pad2 } from '@shared/money'
+import { computeTotals, formatPaise, pad2 } from '@shared/money'
 import { formatDateLong, fromISODate } from '@shared/fy'
 
 export interface DocumentData {
@@ -12,8 +12,9 @@ export interface DocumentData {
   contact: string
   email: string
   signatory: string
-  items: Array<{ desc: string; make: string; qty: number; rate: number }>
+  items: Array<{ desc: string; qty: number; rate: number }>
   tax: { mode: 'IGST' | 'CGST+SGST'; rate: number }
+  /** The letterhead's fourth term is Warranty. */
   terms: { payment: string; delivery: string; prices: string; validity: string }
 }
 
@@ -34,9 +35,12 @@ interface Props {
  * §9: "a serif only inside the document preview so it reads as paper." This is
  * the one place in the application that is not the dense back-office sans.
  *
- * It is a representation, not a rendering. The Word file and the PDF are
- * produced from the real letterhead by server/src/lib/docx.ts; this is here to
- * show content and order, not to prove layout.
+ * Every line of it mirrors server/scripts/build-template.ts, paragraph for
+ * paragraph, so what is on screen and what downloads say the same thing. Change
+ * one and change the other.
+ *
+ * It is still a representation, not a rendering: the Word file and the PDF come
+ * from the real letterhead. This shows content and order.
  */
 export default function DocumentPreview({ data, pendingRef }: Props) {
   const totals = computeTotals(data.items, data.tax.mode, data.tax.rate)
@@ -56,7 +60,7 @@ export default function DocumentPreview({ data, pendingRef }: Props) {
           </tr>
           <tr>
             <td className="w-1/2 border border-ink/30 p-1.5 align-top">
-              To:
+              <span className="font-bold">To: </span>
               <br />
               {data.customer.name || <span className="text-ink-faint">(customer)</span>}
               {data.customer.address
@@ -72,7 +76,7 @@ export default function DocumentPreview({ data, pendingRef }: Props) {
             <td className="border border-ink/30 p-1.5 align-top">
               From:
               <br />
-              {COMPANY.name}
+              <span className="font-bold">{COMPANY.name}</span>
               {COMPANY.addressLines.map((l) => (
                 <span key={l}>
                   <br />
@@ -100,18 +104,21 @@ export default function DocumentPreview({ data, pendingRef }: Props) {
       <table className="w-full border border-ink/30 text-[11.5px]">
         <thead>
           <tr className="font-bold">
-            <th className="border border-ink/30 p-1">Sr. No</th>
-            <th className="border border-ink/30 p-1 text-left">Product Name and Description</th>
-            <th className="border border-ink/30 p-1 text-left">Make</th>
-            <th className="border border-ink/30 p-1">Rate</th>
-            <th className="border border-ink/30 p-1">Qty.</th>
-            <th className="border border-ink/30 p-1">Amount</th>
+            <th className="w-[6%] border border-ink/30 p-1">Sr. No</th>
+            <th className="w-[54%] border border-ink/30 p-1">Product Name and Description</th>
+            <th className="w-[13%] border border-ink/30 p-1">Rate (Rupees)</th>
+            <th className="w-[9%] border border-ink/30 p-1">Qty.</th>
+            <th className="w-[18%] border border-ink/30 p-1">
+              Amount
+              <br />
+              (Rupees)
+            </th>
           </tr>
         </thead>
         <tbody>
           {data.items.length === 0 && (
             <tr>
-              <td className="border border-ink/30 p-2 text-center text-ink-faint" colSpan={6}>
+              <td className="border border-ink/30 p-2 text-center text-ink-faint" colSpan={5}>
                 No lines yet
               </td>
             </tr>
@@ -122,7 +129,6 @@ export default function DocumentPreview({ data, pendingRef }: Props) {
               <td className="whitespace-pre-line border border-ink/30 p-1 align-top">
                 {item.desc}
               </td>
-              <td className="border border-ink/30 p-1 align-top">{item.make}</td>
               <td className="border border-ink/30 p-1 text-right align-top">
                 {formatPaise(item.rate)}
               </td>
@@ -134,7 +140,7 @@ export default function DocumentPreview({ data, pendingRef }: Props) {
           ))}
           <tr>
             <td className="border border-ink/30 p-1" />
-            <td className="border border-ink/30 p-1 font-bold" colSpan={4}>
+            <td className="border border-ink/30 p-1 text-center" colSpan={3}>
               Sub Total
             </td>
             <td className="border border-ink/30 p-1 text-right font-bold">
@@ -144,7 +150,7 @@ export default function DocumentPreview({ data, pendingRef }: Props) {
           {totals.taxRows.map((row) => (
             <tr key={row.label}>
               <td className="border border-ink/30 p-1" />
-              <td className="border border-ink/30 p-1" colSpan={4}>
+              <td className="border border-ink/30 p-1 text-center" colSpan={3}>
                 {row.label}
               </td>
               <td className="border border-ink/30 p-1 text-right">{formatPaise(row.paise)}</td>
@@ -152,7 +158,7 @@ export default function DocumentPreview({ data, pendingRef }: Props) {
           ))}
           <tr>
             <td className="border border-ink/30 p-1" />
-            <td className="border border-ink/30 p-1 font-bold" colSpan={4}>
+            <td className="border border-ink/30 p-1 text-center font-bold" colSpan={3}>
               Total Amount
             </td>
             <td className="border border-ink/30 p-1 text-right font-bold">
@@ -162,20 +168,20 @@ export default function DocumentPreview({ data, pendingRef }: Props) {
         </tbody>
       </table>
 
-      <p className="mt-2 italic">Amount in words: {amountInWords(totals.total)}</p>
+      <p className="mt-3 font-bold">Terms and Condition:</p>
+      <p>1.&nbsp;&nbsp;&nbsp;&nbsp;Payment Terms&nbsp;&nbsp;&nbsp;&nbsp;: {data.terms.payment}</p>
+      <p>2.&nbsp;&nbsp;&nbsp;&nbsp;Delivery&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: {data.terms.delivery}</p>
+      <p>3.&nbsp;&nbsp;&nbsp;&nbsp;Prices&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: {data.terms.prices}</p>
+      <p>4.&nbsp;&nbsp;&nbsp;&nbsp;Warranty&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: {data.terms.validity}</p>
 
-      <p className="mt-3 font-bold">Terms and Conditions:</p>
-      <p>1.&nbsp;&nbsp;&nbsp;&nbsp;Payment Terms&nbsp;&nbsp;: {data.terms.payment}</p>
-      <p>2.&nbsp;&nbsp;&nbsp;&nbsp;Delivery&nbsp;&nbsp;: {data.terms.delivery}</p>
-      <p>3.&nbsp;&nbsp;&nbsp;&nbsp;Prices&nbsp;&nbsp;: {data.terms.prices}</p>
-      <p>4.&nbsp;&nbsp;&nbsp;&nbsp;Validity&nbsp;&nbsp;: {data.terms.validity}</p>
-
-      <p className="mt-3">If you have any queries, please call us at {COMPANY.queriesNumbers}.</p>
+      <p className="mt-3">
+        If you have any queries, please feel free to call us at {COMPANY.queriesNumbers}
+      </p>
       <p>Looking forward to an encouraging and early response.</p>
-      <p className="mt-3">Thanking You,</p>
+      <p className="mt-3">&nbsp;&nbsp;&nbsp;&nbsp;Thanking You,</p>
       <p className="mt-2 font-bold">Yours Truly,</p>
       <p className="font-bold">{COMPANY.closingFor}</p>
-      <p className="font-bold">{data.signatory}</p>
+      <p className="mt-4 font-bold">{data.signatory}</p>
     </div>
   )
 }

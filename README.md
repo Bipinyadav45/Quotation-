@@ -111,6 +111,15 @@ likewise not built for concurrent use. `server/src/lib/pdf.ts` runs one at a tim
 isolated profile per call, and verifies the output file exists because the exit code does not
 prove it. There is a test that fires three conversions at once.
 
+**The document is the letterhead, not an improvement on it.**
+`server/scripts/build-template.ts` reproduces `Quotation -- Format.docx`
+paragraph for paragraph, and `web/src/components/DocumentPreview.tsx` mirrors
+that file so the screen and the download say the same thing. Change one and
+change the other. The single deliberate departure is the two blank paragraphs
+before the signatory: they are signature whitespace that only fits while the
+template is empty, and with five line items they push the name onto a second
+page on its own.
+
 **Never name a font in the template builder.** The letterhead's body inherits Times New Roman
 from `docDefaults`, and 158 of the original's 166 text runs specify no font at all. Hard-coding
 a face silently re-styles the whole quotation the day someone restyles the letterhead — and an
@@ -125,7 +134,12 @@ Each has a regression test. The full reasoning is in [PROJECT-LOG.md](PROJECT-LO
    row loop is reliable. Header, footer, styles and the logo are copied through byte-identical —
    there is a test asserting exactly that. It also renders in Times New Roman, not Arial: 158 of
    the original's 166 text runs name no font at all.
-2. **§7's Make column** takes the item table from five columns to six.
+2. **§7's Make column was added and then removed.** The letterhead has five
+   columns and the instruction is to reproduce it, not improve it. The
+   "Amount in words" line went the same way, and the tax row says "GST 18%"
+   because that is the letterhead's own word — §7 argued for "IGST" on an
+   out-of-state sale, which is arguably more correct; it is one string in
+   `shared/money.ts` if that is ever revisited.
 3. **§6's comparison is gone entirely**, at the desk's request — see the note at the top.
 4. **§5's parser assumes one line per item, and real mail does not.** Four threads out of the
    desk's mailbox broke it, and each is now a fixture: a quantity on its own line

@@ -2,7 +2,7 @@ import Docxtemplater from 'docxtemplater'
 import PizZip from 'pizzip'
 import { readFileSync } from 'node:fs'
 import type { Quote } from '@shared/schema.js'
-import { amountInWords, computeTotals, formatPaise, pad2 } from '@shared/money.js'
+import { computeTotals, formatPaise, pad2 } from '@shared/money.js'
 import { formatDateLong, fromISODate } from '@shared/fy.js'
 import { config } from '../config.js'
 
@@ -27,8 +27,6 @@ export interface RenderModel {
   items: Array<{
     sr: string
     desc: string
-    make: string
-    partCode: string
     rate: string
     qty: string
     amount: string
@@ -36,11 +34,11 @@ export interface RenderModel {
   subTotal: string
   taxRows: Array<{ taxLabel: string; taxAmount: string }>
   grandTotal: string
-  amountWords: string
   payment: string
   delivery: string
   pricesTerm: string
-  validity: string
+  /** The letterhead's fourth term is Warranty, not Validity. */
+  warranty: string
   signatory: string
 }
 
@@ -61,8 +59,6 @@ export function buildRenderModel(quote: Quote): RenderModel {
       // §7 — serial numbers and quantities zero-padded to 2 digits.
       sr: pad2(index + 1),
       desc: item.desc,
-      make: item.make,
-      partCode: item.partCode,
       rate: formatPaise(item.rate),
       qty: pad2(item.qty),
       amount: formatPaise(item.qty * item.rate),
@@ -73,11 +69,10 @@ export function buildRenderModel(quote: Quote): RenderModel {
       taxAmount: formatPaise(row.paise),
     })),
     grandTotal: formatPaise(totals.total),
-    amountWords: amountInWords(totals.total),
     payment: quote.terms.payment,
     delivery: quote.terms.delivery,
     pricesTerm: quote.terms.prices,
-    validity: quote.terms.validity,
+    warranty: quote.terms.validity,
     signatory: quote.signatory,
   }
 }

@@ -112,9 +112,8 @@ describe('buildRenderModel — §8, every value a string', () => {
 
   it('reproduces the totals block', () => {
     expect(model.subTotal).toBe('11,500.00')
-    expect(model.taxRows).toEqual([{ taxLabel: 'IGST 18%', taxAmount: '2,070.00' }])
+    expect(model.taxRows).toEqual([{ taxLabel: 'GST 18%', taxAmount: '2,070.00' }])
     expect(model.grandTotal).toBe('13,570.00')
-    expect(model.amountWords).toBe('Rupees Thirteen Thousand Five Hundred Seventy Only')
   })
 
   it('uses the house date format', () => {
@@ -144,7 +143,8 @@ describe('renderDocx — the golden file', () => {
     expect(text).toContain('Campus 8B, Sarjapur, Marathahalli')
     expect(text).toContain('Outer Ring Road, Bengaluru - 560103')
     expect(text).toContain('Kind Attention: Mr. Subhransu Kar.')
-    expect(text).toContain('Contact Number: 022-40668809')
+    // No space after the colon — that is how the letterhead writes it.
+    expect(text).toContain('Contact Number:022-40668809')
     expect(text).toContain('Email: rakhi.gupte@newtech.in')
     expect(text).toContain('Newtech Computer Services Pvt. Ltd.')
   })
@@ -159,11 +159,10 @@ describe('renderDocx — the golden file', () => {
   it('carries the totals block and the amount in words', () => {
     expect(text).toContain('Sub Total')
     expect(text).toContain('11,500.00')
-    expect(text).toContain('IGST 18%')
+    expect(text).toContain('GST 18%')
     expect(text).toContain('2,070.00')
     expect(text).toContain('Total Amount')
     expect(text).toContain('13,570.00')
-    expect(text).toContain('Rupees Thirteen Thousand Five Hundred Seventy Only')
   })
 
   it('carries the terms and the closing', () => {
@@ -171,15 +170,21 @@ describe('renderDocx — the golden file', () => {
     expect(text).toContain('1-2 Weeks after PO')
     expect(text).toContain('All-inclusive as per the quote')
     expect(text).toContain('31st July 2026.')
-    expect(text).toContain('please call us at 40668812/88')
+    expect(text).toContain('please feel free to call us at 40668812/88')
     expect(text).toContain('Looking forward to an encouraging and early response.')
     expect(text).toContain('For Newtech Computer Services Pvt., Ltd.')
     expect(text).toContain('Rakhi Gupte')
   })
 
-  it('§7 — carries the Make column the original had no room for', () => {
-    expect(text).toContain('Make')
-    expect(text).toContain('Logitech')
+  it('reproduces the letterhead exactly, adding nothing to it', () => {
+    // A Make column and an "Amount in words" line were both added earlier and
+    // both removed: the letterhead has neither, and the instruction is to
+    // reproduce this document rather than improve it.
+    expect(text).not.toContain('Make')
+    expect(text).not.toContain('Amount in words')
+    expect(text).toContain('Terms and Condition:')
+    expect(text).toContain('please feel free to call us at 40668812/88')
+    expect(text).toContain('Warranty')
   })
 
   it('expands the tax loop to two rows for an in-state customer', () => {
@@ -191,7 +196,6 @@ describe('renderDocx — the golden file', () => {
     const t = extractText(inState)
     expect(t).toContain('CGST 9%')
     expect(t).toContain('SGST 9%')
-    expect(t).not.toContain('IGST')
   })
 
   it('preserves the letterhead — header, footer, styles and logo untouched', () => {
