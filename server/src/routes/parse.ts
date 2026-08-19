@@ -3,7 +3,7 @@ import { ParseRequestSchema, type ParseResponse } from '@shared/schema.js'
 import { validateBody, validated } from '../middleware/validate.js'
 import { parseThreadDetailed } from '../lib/parser.js'
 import { parseThreadWithClaude } from '../lib/llmParser.js'
-import { config } from '../config.js'
+import { claudeAvailable } from '../lib/claude.js'
 
 export const parseRoutes = Router()
 
@@ -19,7 +19,17 @@ parseRoutes.post('/parse', validateBody(ParseRequestSchema), (req, res) => {
   res.json(body)
 })
 
-/** Lets the UI hide the Claude button rather than offer one that cannot work. */
+/**
+ * Lets the UI hide every AI affordance rather than offer buttons that cannot
+ * work. With no key the application stays completely usable — that is the
+ * point: the AI is additive, never load-bearing.
+ */
 parseRoutes.get('/capabilities', (_req, res) => {
-  res.json({ llm: config.anthropicApiKey !== null })
+  const llm = claudeAvailable()
+  res.json({
+    llm,
+    parseWithClaude: llm,
+    extractCustomer: llm,
+    draftEmail: llm,
+  })
 })

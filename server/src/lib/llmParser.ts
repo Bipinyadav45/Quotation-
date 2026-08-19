@@ -1,7 +1,6 @@
-import Anthropic from '@anthropic-ai/sdk'
 import { LlmParseResultSchema, type ParsedLine, type ParseResponse } from '@shared/schema.js'
 import { parseRupeesToPaise } from '@shared/money.js'
-import { config } from '../config.js'
+import { askClaude } from './claude.js'
 import { parseThreadDetailed } from './parser.js'
 import { findMake } from './makes.js'
 
@@ -22,16 +21,6 @@ import { findMake } from './makes.js'
  * §5's failure rule is preserved exactly: on ANY failure, return the pattern
  * parser's result with a note. This never surfaces an error page.
  */
-
-const MODEL = 'claude-sonnet-5'
-
-/**
- * §5 says 2000. That was written for a model without thinking; on a current
- * model `max_tokens` caps thinking and output together, and 2000 can truncate
- * mid-array on a long thread — which shows up as a lost line item, not an
- * error. 8000 with effort "low" costs very little and cannot truncate.
- */
-const MAX_TOKENS = 8000
 
 /**
  * The output constraint, as plain JSON Schema.
@@ -102,68 +91,60 @@ export async function parseThreadWithClaude(thread: string): Promise<ParseRespon
     return { lines, source: 'pattern', note, skipped, warnings }
   }
 
-  if (!config.anthropicApiKey) {
-    return fallback('ANTHROPIC_API_KEY is not set, so the pattern parser was used instead.')
+  // §5's rule, unchanged: on ANY failure return the pattern parser's result
+  // with a note. This never surfaces an error page.
+  const result = await askClaude({
+    system: SYSTEM,
+    user: thread,
+    outputSchema: OUTPUT_SCHEMA,
+    validate: LlmParseResultSchema,
+    effort: 'low',
+  })
+
+  if (!result.ok) return fallback(`${result.reason} The pattern parser was used instead.`)
+  if (result.data.lines.length === 0) {
+    return fallback('Claude found no line items, so the pattern parser was used instead.')
   }
 
-  try {
-    const client = new Anthropic({ apiKey: config.anthropicApiKey })
+  const lines: ParsedLine[] = []
+  const rejected: string[] = []
 
-    const response = await client.messages.create({
-      model: MODEL,
-      max_tokens: MAX_TOKENS,
-      system: SYSTEM,
-      // Extraction is not a reasoning task; low effort is faster and cheaper.
-      output_config: {
-        effort: 'low',
-        format: { type: 'json_schema', schema: OUTPUT_SCHEMA },
-      },
-      messages: [{ role: 'user', content: thread }],
+  result.data.lines.forEach((line, index) => {
+    const text = line.rateText.trim()
+    const rate = text === '' ? 0 : parseRupeesToPaise(text)
+
+    // A rate that will not parse is dropped, not zeroed. `?? 0` here quoted
+    // ₹0.00 for a product that had a price — silently, on a document sent to a
+    // customer.
+    if (rate === null) {
+      rejected.push(`${line.desc || line.raw} (could not read the rate "${text}")`)
+      return
+    }
+
+    lines.push({
+      id: `llm-${index + 1}`,
+      raw: line.raw,
+      desc: line.desc,
+      // The makes table is authoritative, so a brand the model invented does
+      // not become a brand on the document. Fall back to the model only if we
+      // have no entry for it.
+      make: findMake(line.raw) || line.make,
+      partCode: line.partCode,
+      qty: line.qty,
+      rate,
+      role: line.role,
+      source: 'llm',
     })
+  })
 
-    // Always check stop_reason before reading content — on a refusal the
-    // content array is empty and content[0] would throw.
-    if (response.stop_reason === 'refusal') {
-      return fallback('Claude declined to parse that thread, so the pattern parser was used.')
-    }
+  if (lines.length === 0) {
+    return fallback("None of Claude's lines could be read, so the pattern parser was used.")
+  }
 
-    const text = response.content.find((block) => block.type === 'text')?.text
-    if (!text) {
-      return fallback('Claude returned nothing usable, so the pattern parser was used instead.')
-    }
-
-    // §5 — "Validate the parse with zod before it reaches the client."
-    const parsed = LlmParseResultSchema.parse(JSON.parse(text))
-
-    if (parsed.lines.length === 0) {
-      return fallback('Claude found no line items, so the pattern parser was used instead.')
-    }
-
-    const lines: ParsedLine[] = parsed.lines.map((line, index) => {
-      const rate = line.rateText.trim() === '' ? 0 : (parseRupeesToPaise(line.rateText) ?? 0)
-      return {
-        id: `llm-${index + 1}`,
-        raw: line.raw,
-        desc: line.desc,
-        // The makes table is authoritative, so a brand the model invented does
-        // not become a brand flag. Fall back to the model only if we have no
-        // entry for it.
-        make: findMake(line.raw) || line.make,
-        partCode: line.partCode,
-        qty: line.qty,
-        rate,
-        role: line.role,
-        source: 'llm',
-      }
-    })
-
-    return { lines, source: 'llm', skipped: [], warnings: [] }
-  } catch (err) {
-    // §5 — "on validation failure, return the pattern-parser result with a note
-    // rather than an error page." The same applies to a network blip, a rate
-    // limit, or a schema mismatch.
-    return fallback(
-      `Claude could not parse that thread (${(err as Error).message}), so the pattern parser was used instead.`,
-    )
+  return {
+    lines,
+    source: 'llm',
+    skipped: rejected,
+    warnings: [],
   }
 }
