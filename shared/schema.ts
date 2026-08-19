@@ -178,6 +178,20 @@ export const CustomerSearchResponseSchema = z.object({
   customers: z.array(CustomerRecordSchema),
 })
 
+/** What we last quoted a product for. Never applied without a click. */
+export const PriceMatchSchema = z.object({
+  ratePaise: z.number().int(),
+  description: z.string(),
+  partCode: z.string(),
+  customerName: z.string(),
+  ref: z.string(),
+  revision: z.number().int(),
+  date: z.string(),
+  timesQuoted: z.number().int(),
+  via: z.enum(['part-code', 'description']),
+})
+export type PriceMatch = z.infer<typeof PriceMatchSchema>
+
 /** One row of the History table (§9 screen 5). */
 export const QuoteSummarySchema = z.object({
   id: z.string(),

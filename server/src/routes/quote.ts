@@ -13,6 +13,7 @@ import { getDb } from '../db/client.js'
 import { allocateRef, peekNextSeq } from '../lib/refno.js'
 import { loadMakes } from '../lib/makes.js'
 import { rememberCustomer, searchCustomers } from '../lib/customers.js'
+import { findPastPrices } from '../lib/priceHistory.js'
 import { z } from 'zod'
 
 export const quoteRoutes = Router()
@@ -66,6 +67,26 @@ quoteRoutes.get('/customers', (req, res) => {
     return
   }
   res.json({ customers: searchCustomers(parsed.data.q, parsed.data.limit) })
+})
+
+/**
+ * What we last quoted for these products. One round trip for the whole
+ * quotation rather than one per line.
+ */
+const PriceHistoryBodySchema = z.object({
+  lines: z
+    .array(z.object({ desc: z.string(), partCode: z.string().default('') }))
+    .max(100),
+  excludeQuoteId: z.string().optional(),
+})
+
+quoteRoutes.post('/price-history', validateBody(PriceHistoryBodySchema), (req, res) => {
+  const { lines, excludeQuoteId } = validated(PriceHistoryBodySchema, req)
+  res.json({
+    matches: lines.map((line) =>
+      findPastPrices({ desc: line.desc, partCode: line.partCode, excludeQuoteId }),
+    ),
+  })
 })
 
 quoteRoutes.post('/quote', validateBody(SaveQuoteRequestSchema), (req, res) => {
