@@ -40,6 +40,26 @@ npm start                 # http://localhost:4000
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run build:template` | Regenerates `server/templates/quotation-template.docx` from the letterhead |
 
+## What it does for you
+
+| | Needs a key? | Cost |
+|---|---|---|
+| **Customer master** — the second quotation to a customer fills itself | no | free |
+| **Price memory** — what you last charged, under each Rate cell | no | free |
+| **Parse with Claude** — for threads the patterns cannot read | yes | ~₹5 |
+| **Read customer details** — name, address, GSTIN out of the thread | yes | ~₹1.5 |
+| **Draft covering email** — the note that goes with the quotation | yes | ~₹3 |
+
+The first two are the ones that save the most typing, and they cost nothing —
+they read your own records. With no `ANTHROPIC_API_KEY` the other three are not
+shown at all and everything else works exactly as before.
+
+**AI suggests, a human accepts.** Nothing Claude produces reaches a saved
+quotation or a rendered document without a click — per field where the fields
+are independent, so a wrong address never costs you a correct GSTIN. A GSTIN
+read from an email signature is a suggestion; the one on file was confirmed by
+someone saving a quotation with it, and wins.
+
 ## PDF export
 
 The PDF is produced by converting the generated `.docx` — not by rendering the quotation a

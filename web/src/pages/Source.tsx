@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { ParsedLine, ParseResponse } from '@shared/schema'
+import type { CustomerRecord, ExtractedCustomer, ParsedLine, ParseResponse } from '@shared/schema'
 import { SAMPLE_THREAD } from '@shared/sample'
 import { apiPost, useApi } from '../lib/api'
 import Callout from '../components/Callout'
@@ -14,17 +14,19 @@ interface Props {
     skipped: string[],
     warnings: string[],
   ) => void
+  /** Customer details read from the thread, carried into the editor. */
+  onCustomerRead: (extracted: ExtractedCustomer, onFile: CustomerRecord | null) => void
 }
 
 /** Screen 1 — the email thread goes in here and nowhere else. */
-export default function Source({ thread, onThreadChange, onParsed }: Props) {
-  const [busy, setBusy] = useState<'pattern' | 'llm' | null>(null)
+export default function Source({ thread, onThreadChange, onParsed, onCustomerRead }: Props) {
+  const [busy, setBusy] = useState<'pattern' | 'llm' | 'customer' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
 
   // §5's Claude path needs a key. Without one the button is hidden rather than
   // offered and then failing.
-  const capabilities = useApi<{ llm: boolean }>('/api/capabilities')
+  const capabilities = useApi<{ llm: boolean; extractCustomer: boolean }>('/api/capabilities')
 
   async function parse(endpoint: '/api/parse' | '/api/parse/llm') {
     setBusy(endpoint === '/api/parse' ? 'pattern' : 'llm')
@@ -104,6 +106,35 @@ export default function Source({ thread, onThreadChange, onParsed }: Props) {
             title="Slower, and costs a little. Worth it when the ordinary reader misses lines."
           >
             {busy === 'llm' ? 'Asking Claude…' : 'Read it with Claude instead'}
+          </button>
+        )}
+
+        {capabilities.data?.extractCustomer && (
+          <button
+            type="button"
+            className="btn"
+            onClick={async () => {
+              setBusy('customer')
+              setError(null)
+              try {
+                const r = await apiPost<{
+                  ok: boolean
+                  extracted?: ExtractedCustomer
+                  onFile?: CustomerRecord | null
+                  reason?: string
+                }>('/api/extract-customer', { thread })
+                if (!r.ok || !r.extracted) setError(r.reason ?? 'Could not read the customer.')
+                else onCustomerRead(r.extracted, r.onFile ?? null)
+              } catch (err) {
+                setError((err as Error).message)
+              } finally {
+                setBusy(null)
+              }
+            }}
+            disabled={busy !== null || empty}
+            title="Reads the customer's name, address, GSTIN and contact out of the thread"
+          >
+            {busy === 'customer' ? 'Reading…' : 'Read customer details'}
           </button>
         )}
 

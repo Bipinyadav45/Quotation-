@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { ParsedLine, Quote, QuoteItem } from '@shared/schema'
+import type { CustomerRecord, ExtractedCustomer, ParsedLine, Quote, QuoteItem } from '@shared/schema'
 import { itemsFromLines } from './lib/draft'
 import { DEFAULT_SALESPERSON, DEFAULT_TERMS, GST_RATE_PERCENT } from '@shared/company'
 import { endOfMonth, formatDateLong, toISODate } from '@shared/fy'
@@ -85,6 +85,11 @@ export default function App() {
   const [skipped, setSkipped] = useState<string[]>([])
   /** Judgements the parser cannot make for the desk — e.g. a superseded price. */
   const [warnings, setWarnings] = useState<string[]>([])
+  /** Customer details Claude read, offered on the quotation screen. */
+  const [readCustomer, setReadCustomer] = useState<{
+    extracted: ExtractedCustomer
+    onFile: CustomerRecord | null
+  } | null>(null)
 
   /**
    * The stepper lets you jump back to the thread, edit it, and jump forward
@@ -108,6 +113,7 @@ export default function App() {
     setThread('')
     setSkipped([])
     setWarnings([])
+    setReadCustomer(null)
     setDraft(null)
     setSaved(null)
     setScreen('source')
@@ -169,6 +175,7 @@ export default function App() {
           <Source
             thread={thread}
             onThreadChange={setThread}
+            onCustomerRead={(extracted, onFile) => setReadCustomer({ extracted, onFile })}
             onParsed={(nextLines, usedThread, notRead, notes) => {
               setThread(usedThread)
               setParsedThread(usedThread)
@@ -201,6 +208,8 @@ export default function App() {
             skipped={skipped}
             warnings={warnings}
             stale={draftStale}
+            readCustomer={readCustomer}
+            onDismissReadCustomer={() => setReadCustomer(null)}
             saved={saved}
             onSaved={setSaved}
             onRevise={() => {

@@ -192,6 +192,30 @@ export const PriceMatchSchema = z.object({
 })
 export type PriceMatch = z.infer<typeof PriceMatchSchema>
 
+/**
+ * Customer details Claude read out of a thread. A suggestion: shown with its
+ * provenance, accepted field by field, never written anywhere on its own.
+ */
+export const ExtractedCustomerSchema = z.object({
+  name: z.string(),
+  address: z.string(),
+  attention: z.string(),
+  gstin: z.string(),
+  state: z.string(),
+  confidence: z.enum(['high', 'medium', 'low']),
+})
+export type ExtractedCustomer = z.infer<typeof ExtractedCustomerSchema>
+
+export const ExtractCustomerResponseSchema = z.object({
+  ok: z.boolean(),
+  /** Present when ok. */
+  extracted: ExtractedCustomerSchema.optional(),
+  /** The matching row already on file, which should win over a fresh read. */
+  onFile: CustomerRecordSchema.nullable().optional(),
+  /** Present when not ok — a sentence, never a stack. */
+  reason: z.string().optional(),
+})
+
 /** One row of the History table (§9 screen 5). */
 export const QuoteSummarySchema = z.object({
   id: z.string(),
