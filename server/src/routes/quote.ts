@@ -70,7 +70,7 @@ quoteRoutes.post('/quote', validateBody(SaveQuoteRequestSchema), (req, res) => {
          tax_mode, tax_rate,
          term_payment, term_delivery, term_prices, term_validity,
          sub_paise, tax_paise, total_paise,
-         source_thread, reconciliation,
+         source_thread,
          status, created_at, updated_at
        ) VALUES (
          @id, @ref, @revision, @date,
@@ -79,7 +79,7 @@ quoteRoutes.post('/quote', validateBody(SaveQuoteRequestSchema), (req, res) => {
          @taxMode, @taxRate,
          @termPayment, @termDelivery, @termPrices, @termValidity,
          @sub, @tax, @total,
-         @sourceThread, @reconciliation,
+         @sourceThread,
          'draft', @now, @now
        )`,
     ).run({
@@ -105,7 +105,6 @@ quoteRoutes.post('/quote', validateBody(SaveQuoteRequestSchema), (req, res) => {
       tax: totals.tax,
       total: totals.total,
       sourceThread: input.sourceThread,
-      reconciliation: JSON.stringify(input.reconciliation),
       now,
     })
 
@@ -143,7 +142,6 @@ quoteRoutes.post('/quote', validateBody(SaveQuoteRequestSchema), (req, res) => {
       terms: input.terms,
       totals: { sub: totals.sub, tax: totals.tax, total: totals.total },
       sourceThread: input.sourceThread,
-      reconciliation: input.reconciliation,
       status: 'draft',
       createdAt: now,
     }
@@ -281,7 +279,6 @@ export function loadQuote(id: string): Quote | null {
       total: row.total_paise as number,
     },
     sourceThread: row.source_thread as string,
-    reconciliation: JSON.parse(row.reconciliation as string),
     status: row.status as Quote['status'],
     createdAt: row.created_at as string,
   }

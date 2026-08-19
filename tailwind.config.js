@@ -12,9 +12,10 @@ export default {
         // §9 — a single deep-blue accent for navigation and primaries.
         accent: { DEFAULT: '#1E3A5F', hover: '#152C4A', faint: '#E6EDF5' },
 
-        // §9 — amber is RESERVED EXCLUSIVELY for drift flags. Never decorative.
-        // If you are reaching for `drift-*` and you are not rendering a Flag,
-        // you are about to break the one rule that makes this screen scannable.
+        // §9 — amber is RESERVED for "look here", and nothing else. It now marks
+        // exactly two things: a line the parser could not read, and a price that
+        // may be superseded. Reach for it for anything decorative and it stops
+        // meaning either.
         drift: { DEFAULT: '#9A5B0B', bg: '#FBF1DF', rule: '#DEBC85' },
 
         // A system failure — a download that would not build, a server that did

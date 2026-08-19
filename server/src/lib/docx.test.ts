@@ -76,7 +76,6 @@ const QUOTE: Quote = {
   },
   totals: { sub: 1_150_000, tax: 207_000, total: 1_357_000 },
   sourceThread: '',
-  reconciliation: [],
   status: 'draft',
   createdAt: '2026-07-10T00:00:00.000Z',
 }

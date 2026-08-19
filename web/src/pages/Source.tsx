@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { ParsedLine, ParseResponse, ReconciledPair, ReconcileResponse } from '@shared/schema'
+import type { ParsedLine, ParseResponse } from '@shared/schema'
 import { SAMPLE_THREAD } from '@shared/sample'
 import { apiPost, useApi } from '../lib/api'
 import Callout from '../components/Callout'
@@ -10,7 +10,6 @@ interface Props {
   onThreadChange: (thread: string) => void
   onParsed: (
     lines: ParsedLine[],
-    pairs: ReconciledPair[],
     thread: string,
     skipped: string[],
     warnings: string[],
@@ -33,13 +32,10 @@ export default function Source({ thread, onThreadChange, onParsed }: Props) {
     setNote(null)
     try {
       const parsed = await apiPost<ParseResponse>(endpoint, { thread })
-      const reconciled = await apiPost<ReconcileResponse>('/api/reconcile', {
-        lines: parsed.lines,
-      })
       // §5 — a Claude failure comes back as the pattern result plus a note, not
       // an error page. Carry the note through so the desk knows what happened.
       if (parsed.note) setNote(parsed.note)
-      onParsed(parsed.lines, reconciled.pairs, thread, parsed.skipped ?? [], parsed.warnings ?? [])
+      onParsed(parsed.lines, thread, parsed.skipped ?? [], parsed.warnings ?? [])
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -55,7 +51,7 @@ export default function Source({ thread, onThreadChange, onParsed }: Props) {
       <ScreenHeader
         step={1}
         title="Email thread"
-        purpose="Paste the whole thread — both sides, quoting and all. Nothing is typed twice after this."
+        purpose="Paste the whole thread. The products in it become the lines of the quotation, which you then check and edit."
         right={
           <span className="label no-print">
             {lineCount === 0 ? 'nothing pasted' : `${lineCount} lines pasted`}
@@ -67,9 +63,9 @@ export default function Source({ thread, onThreadChange, onParsed }: Props) {
         <Callout className="mb-3" label="How it works">
           The parser splits the thread on its <span className="font-mono">wrote:</span> and{' '}
           <span className="font-mono">From:</span> headers to work out who wrote each line, then
-          picks out anything carrying a quantity or a price. Lines with a price become our quote;
-          lines with only a quantity become the customer’s ask. You can move any line to the other
-          side on the next screen.
+          picks out anything carrying a quantity or a price, and turns each into a line of the
+          quotation. Nothing is final — every line can be edited, reordered or deleted on the next
+          screen.
         </Callout>
       )}
 

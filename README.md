@@ -1,12 +1,16 @@
 # Newtech Quotation Desk
 
-Turns a customer RFQ email thread into a quotation on Newtech letterhead — and, before it
-produces anything, shows a line-by-line reconciliation of what the customer asked for against
-what we are about to quote.
+Turns a customer RFQ email thread into a quotation on Newtech letterhead. Paste the thread,
+check the lines it found, save, download.
 
-The reconciliation is the point. Quotations here are retyped by hand from email threads, and
-the errors that cost time are silent ones: a cable length changed from 1 mtr to 1.5 mtr, a
-brand dropped from a description, a part code lost. Each of those sends the customer's
+> **The ask-vs-quote comparison was removed at the desk's request** (19 August 2026). PROMPT.md
+> §1 calls it "the point of the product": it paired each request against each offer and flagged
+> the differences. On real threads the two sides usually came from different revisions and did
+> not pair, so every row read "quoted but not requested" and it was pure friction. `git log` has
+> it if it is ever wanted back.
+>
+> What survived, because it earns its place: the parser reports **every line it could not read**,
+> and warns when the **prices came from a superseded message** in a forwarded chain. Each of those sends the customer's
 procurement system back for another round.
 
 Built to [PROMPT.md](PROMPT.md).
@@ -60,8 +64,8 @@ Force one with `PDF_BACKEND=libreoffice|word` in `.env`, or point at an unusual 
 
 ```
 shared/     the one contract — §4 as Zod, money, financial year, company details
-server/     Express, SQLite, the parser, the reconciler, document generation
-web/        React, five screens
+server/     Express, SQLite, the parser, document generation
+web/        React, four screens
 ```
 
 `shared/` is imported by both sides through the `@shared/*` path alias. §4's data model is
@@ -75,9 +79,9 @@ is an exact integer, so §7's rule — sum the unrounded line amounts, apply tax
 round once — is exactly reproducible. A quotation that is one paisa off is a quotation the
 customer's system rejects.
 
-**Amber means "look here", and nothing else.** §9 reserves it for drift flags. If you reach for
-`drift-*` in Tailwind and you are not rendering a `Flag`, you are about to cost that colour its
-meaning.
+**Amber means "look here", and nothing else.** §9 reserves it. It now marks exactly two things:
+a line the parser could not read, and a price that may be superseded. Use it decoratively and it
+stops meaning either.
 
 **PDF conversion is serialised on purpose.** Concurrent `soffice` invocations that share a user
 profile directory collide — the second exits 0 having written nothing. Word automation is
@@ -117,6 +121,10 @@ Zod schema §5 asked for.
 ```bash
 npm test
 ```
+
+`server/src/lib/parser.test.ts` is the one to read: it carries four real threads out of the
+desk's mailbox, each added after it broke something. `server/src/lib/docx.test.ts` renders §11's
+quotation and checks every label and amount against the document Newtech actually sent.
 
 The one that matters most is `server/src/lib/reconcile.test.ts`: §11's thread, five requests,
 five offers, and **exactly two flags** — the 1 mtr / 1.5 mtr length change on line 2 and the

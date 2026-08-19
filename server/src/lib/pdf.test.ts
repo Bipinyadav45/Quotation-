@@ -39,7 +39,6 @@ const QUOTE: Quote = {
   terms: { payment: '100% Advance', delivery: '1-2 Weeks after PO', prices: 'All-inclusive as per the quote', validity: '31st July 2026.' },
   totals: { sub: 455_000, tax: 81_900, total: 536_900 },
   sourceThread: '',
-  reconciliation: [],
   status: 'draft',
   createdAt: '2026-07-10T00:00:00.000Z',
 }

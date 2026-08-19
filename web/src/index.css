@@ -35,6 +35,9 @@
 }
 
 @layer components {
+  /* §9 reserves amber for "look here" and nothing else. With the ask-vs-quote
+     screen gone it now marks exactly two things: a line the parser could not
+     read, and a price that may be superseded. Never use it decoratively. */
   /* §9 — dense over airy. No cards with drop shadows, no gradients, no pills. */
   .panel {
     @apply border border-rule bg-paper-raised;
@@ -48,19 +51,6 @@
 
   .btn-primary {
     @apply border-accent bg-accent text-paper-raised hover:bg-accent-hover;
-  }
-
-  /* §9 — amber appears ONLY here, so its presence always means "look here". */
-  .drift-strip {
-    @apply border border-dashed border-drift-rule bg-drift-bg px-2 py-1
-           text-[12px] text-drift;
-  }
-
-  /* The exact words that differ between what was asked and what we are quoting.
-     Same amber, same meaning — just located precisely instead of described. */
-  .diff-changed {
-    @apply bg-drift-bg font-semibold text-drift;
-    box-shadow: inset 0 -2px 0 theme('colors.drift.rule');
   }
 
   /* --- editable vs calculated -------------------------------------------
@@ -87,15 +77,6 @@
     @apply bg-paper-sunk text-ink-muted;
   }
 
-  /* A row carrying at least one flag. The stripe is what makes the screen
-     scannable without reading it. */
-  .row-flagged {
-    @apply border-l-2 border-l-drift bg-drift-bg/25;
-  }
-
-  .row-clean {
-    @apply border-l-2 border-l-transparent;
-  }
 }
 
 @media print {

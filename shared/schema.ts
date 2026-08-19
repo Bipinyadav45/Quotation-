@@ -45,45 +45,12 @@ export const ParsedLineSchema = z.object({
    * position, not a verdict."
    *
    * §4 has no field for that, so this is an additive optional one. Set when the
-   * sender's domain disagrees with the role the price/qty heuristic chose; the
-   * reconcile screen marks the row so a human looks at it.
+   * sender's domain disagrees with the role the price/qty heuristic chose, so
+   * the quotation screen can mark the line.
    */
   roleUncertain: z.boolean().optional(),
 })
 export type ParsedLine = z.infer<typeof ParsedLineSchema>
-
-export const FlagKindSchema = z.enum([
-  'spec', // a length value differs
-  'brand', // brand dropped or changed
-  'qty', // quantities differ
-  'price', // offer carries no rate
-  'missing', // requested but not quoted
-  'extra', // quoted but not requested
-  'code', // part code dropped
-])
-export type FlagKind = z.infer<typeof FlagKindSchema>
-
-export const FlagSchema = z.object({
-  kind: FlagKindSchema,
-  text: z.string(),
-  /**
-   * §6: `block` does not prevent generating the document — it disables the
-   * one-click path and requires the user to tick "reviewed" on that line.
-   * The purchase desk sometimes upsizes deliberately; the app's job is to make
-   * sure it was deliberate.
-   */
-  severity: z.enum(['warn', 'block']),
-})
-export type Flag = z.infer<typeof FlagSchema>
-
-export const ReconciledPairSchema = z.object({
-  request: ParsedLineSchema.nullable(),
-  offer: ParsedLineSchema.nullable(),
-  /** 0..1 match confidence. */
-  score: z.number(),
-  flags: z.array(FlagSchema),
-})
-export type ReconciledPair = z.infer<typeof ReconciledPairSchema>
 
 export const QuoteItemSchema = z.object({
   desc: z.string(),
@@ -139,7 +106,6 @@ export const QuoteSchema = z.object({
   }),
   /** §4: keep the original email, always. */
   sourceThread: z.string(),
-  reconciliation: z.array(ReconciledPairSchema),
   status: z.enum(['draft', 'sent', 'won', 'lost']).default('draft'),
   createdAt: z.string(),
 })
@@ -168,16 +134,6 @@ export const ParseResponseSchema = z.object({
 })
 export type ParseResponse = z.infer<typeof ParseResponseSchema>
 
-export const ReconcileRequestSchema = z.object({
-  lines: z.array(ParsedLineSchema),
-})
-export type ReconcileRequest = z.infer<typeof ReconcileRequestSchema>
-
-export const ReconcileResponseSchema = z.object({
-  pairs: z.array(ReconciledPairSchema),
-})
-export type ReconcileResponse = z.infer<typeof ReconcileResponseSchema>
-
 /**
  * Saving a quote. The client never sends `ref`, `revision`, `totals` or
  * `createdAt`: the reference is allocated server-side on save (§7) and the
@@ -197,7 +153,6 @@ export const SaveQuoteRequestSchema = z.object({
   tax: z.object({ mode: TaxModeSchema, rate: z.number().int() }),
   terms: TermsSchema,
   sourceThread: z.string(),
-  reconciliation: z.array(ReconciledPairSchema),
   /** Set to clone an existing quote as the next revision, keeping its ref (§10). */
   reviseOf: z.string().optional(),
 })

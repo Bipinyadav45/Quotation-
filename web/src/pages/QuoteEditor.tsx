@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Quote, ReconciledPair } from '@shared/schema'
+import type { Quote } from '@shared/schema'
 import { amountInWords, computeTotals, formatPaise, pad2, parseRupeesToPaise } from '@shared/money'
 import { formatDateLong, fromISODate } from '@shared/fy'
 import { INDIAN_STATES, taxModeForState } from '@shared/states'
@@ -39,7 +39,12 @@ interface Props {
   draft: QuoteDraft
   onDraftChange: (draft: QuoteDraft) => void
   sourceThread: string
-  reconciliation: ReconciledPair[]
+  /** Lines with content that the parser could not turn into a product. */
+  skipped?: string[]
+  /** Judgements the parser cannot make — e.g. the prices may be superseded. */
+  warnings?: string[]
+  /** The thread has been edited since these lines were read from it. */
+  stale?: boolean
   onSaved: (quote: Quote) => void
   onBack: () => void
 }
@@ -49,7 +54,9 @@ export default function QuoteEditor({
   draft,
   onDraftChange,
   sourceThread,
-  reconciliation,
+  skipped = [],
+  warnings = [],
+  stale = false,
   onSaved,
   onBack,
 }: Props) {
@@ -125,7 +132,6 @@ export default function QuoteEditor({
         tax: draft.tax,
         terms: draft.terms,
         sourceThread,
-        reconciliation,
         ...(draft.reviseOf ? { reviseOf: draft.reviseOf } : {}),
       })
       onSaved(quote)
@@ -141,7 +147,7 @@ export default function QuoteEditor({
       <ScreenHeader
         step={3}
         title="Quotation"
-        purpose="Fill in who it is for, check the lines, and save. The reference number is taken at the moment you save — not before — so leaving this page costs nothing."
+        purpose="These lines came straight from the thread. Check every one against what the customer actually asked for, then save. The reference number is taken at the moment you save, not before."
         right={
           draft.reviseOf ? (
             <span className="label no-print">
@@ -160,6 +166,36 @@ export default function QuoteEditor({
           )
         }
       />
+
+      {stale && (
+        <Callout tone="problem" label="Out of date" className="mb-3">
+          The thread has been edited since these lines were read from it. Go back and read it again
+          before saving.
+        </Callout>
+      )}
+
+      {warnings.map((warning, i) => (
+        <Callout key={i} tone="problem" label="Check this" className="mb-3">
+          {warning}
+        </Callout>
+      ))}
+
+      {skipped.length > 0 && (
+        <details className="mb-3 border border-drift-rule bg-drift-bg text-[12.5px] text-drift no-print">
+          <summary className="cursor-pointer px-3 py-2">
+            <span className="label mr-2 text-drift">not read</span>
+            {skipped.length} line{skipped.length === 1 ? '' : 's'} in the thread produced no
+            product. Open this and check none of them was something the customer asked for.
+          </summary>
+          <ul className="border-t border-dashed border-drift-rule px-3 py-2">
+            {skipped.map((line, i) => (
+              <li key={i} className="truncate py-0.5 font-mono text-[12px]">
+                {line}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
 
       {/* Says the convention once, rather than leaving it to be discovered by
           clicking things to see which ones respond. */}
@@ -505,7 +541,7 @@ export default function QuoteEditor({
 
       <div className="flex items-center gap-2 no-print">
         <button type="button" className="btn" onClick={onBack}>
-          Back to ask vs quote
+          Back to thread
         </button>
         <span className="grow" />
         <button

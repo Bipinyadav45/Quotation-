@@ -1,29 +1,63 @@
 import { useState } from 'react'
-import type { ParsedLine, Quote, QuoteItem, ReconciledPair } from '@shared/schema'
+import type { ParsedLine, Quote, QuoteItem } from '@shared/schema'
 import { DEFAULT_SALESPERSON, DEFAULT_TERMS, GST_RATE_PERCENT } from '@shared/company'
 import { endOfMonth, formatDateLong, toISODate } from '@shared/fy'
 import { formatPaise } from '@shared/money'
 import { taxModeForState } from '@shared/states'
 import Source from './pages/Source'
-import Reconcile from './pages/Reconcile'
 import QuoteEditor, { type EditorItem, type QuoteDraft } from './pages/QuoteEditor'
 import Stepper from './components/Stepper'
 import Preview from './pages/Preview'
 import History from './pages/History'
 
-type Screen = 'source' | 'reconcile' | 'editor' | 'document' | 'history'
+type Screen = 'source' | 'editor' | 'document' | 'history'
 
 /**
- * The four steps a quotation passes through. History is not among them — it is
+ * The three steps a quotation passes through. History is not among them — it is
  * somewhere you go, not a stage you complete, and putting it in the sequence
  * would imply a quotation is unfinished until you have visited it.
  */
 const FLOW: Array<{ screen: Screen; label: string; locked: string }> = [
   { screen: 'source', label: 'Email thread', locked: '' },
-  { screen: 'reconcile', label: 'Ask vs quote', locked: 'Read a thread first' },
-  { screen: 'editor', label: 'Quotation', locked: 'Build from the ask-vs-quote screen first' },
+  { screen: 'editor', label: 'Quotation', locked: 'Read a thread first' },
   { screen: 'document', label: 'Document', locked: 'Save the quotation first' },
 ]
+
+const toItem = (line: ParsedLine): QuoteItem => ({
+  desc: line.desc,
+  make: line.make,
+  partCode: line.partCode,
+  qty: line.qty,
+  rate: line.rate,
+})
+
+/**
+ * Turn the parsed thread into the lines of a quotation.
+ *
+ * A two-sided thread holds the same product twice — the customer's request and
+ * our priced offer. Without the ask-vs-quote comparison there is nothing that
+ * can tell they are one product, so listing both puts five zero-priced
+ * duplicates on a five-line quotation.
+ *
+ * So: if anything in the thread carries a price, those are what we are quoting
+ * and the rest is the conversation around them. If nothing does — an incoming
+ * RFQ — then every line is wanted.
+ *
+ * What gets left out is never dropped quietly; it joins the "not read" list on
+ * the quotation screen, because a quantity the customer stated often lives on
+ * exactly those lines.
+ */
+function itemsFromLines(lines: ParsedLine[]): { items: QuoteItem[]; setAside: string[] } {
+  const priced = lines.filter((line) => line.rate > 0)
+  if (priced.length === 0) return { items: lines.map(toItem), setAside: [] }
+
+  return {
+    items: priced.map(toItem),
+    setAside: lines
+      .filter((line) => line.rate === 0)
+      .map((line) => `${line.desc.split('\n')[0]}${line.qty > 0 ? `  (qty ${line.qty})` : ''}`),
+  }
+}
 
 const toEditorItem = (item: QuoteItem): EditorItem => ({
   key: crypto.randomUUID(),
@@ -76,8 +110,6 @@ function draftFromQuote(quote: Quote, asRevision: boolean): QuoteDraft {
 export default function App() {
   const [screen, setScreen] = useState<Screen>('source')
   const [thread, setThread] = useState('')
-  const [lines, setLines] = useState<ParsedLine[]>([])
-  const [pairs, setPairs] = useState<ReconciledPair[]>([])
   const [draft, setDraft] = useState<QuoteDraft | null>(null)
   const [saved, setSaved] = useState<Quote | null>(null)
   /** The exact thread text the current comparison was built from. */
@@ -88,16 +120,14 @@ export default function App() {
   const [warnings, setWarnings] = useState<string[]>([])
 
   /**
-   * Now that the stepper lets you jump back to the thread, edit it, and jump
-   * forward again, the comparison on screen can be built from text that no
-   * longer exists. Silently showing a stale reconciliation is precisely the
-   * class of error this product exists to prevent, so say so.
+   * The stepper lets you jump back to the thread, edit it, and jump forward
+   * again — at which point the lines on screen came from text that no longer
+   * exists. Say so rather than let a stale quotation look current.
    */
-  const reconciliationStale = parsedThread !== '' && thread.trim() !== parsedThread.trim()
+  const draftStale = parsedThread !== '' && thread.trim() !== parsedThread.trim()
 
   const reached: Record<Screen, boolean> = {
     source: true,
-    reconcile: pairs.length > 0,
     editor: draft !== null,
     document: saved !== null,
     history: true,
@@ -105,13 +135,11 @@ export default function App() {
 
   // How far through the flow this quotation has got, so the stepper can fill
   // its track rather than only showing what happens to be clickable.
-  const progress = saved !== null ? 3 : draft !== null ? 2 : pairs.length > 0 ? 1 : 0
+  const progress = saved !== null ? 2 : draft !== null ? 1 : 0
   const activeStep = FLOW.findIndex((s) => s.screen === screen)
 
   function startNew() {
     setThread('')
-    setLines([])
-    setPairs([])
     setSkipped([])
     setWarnings([])
     setDraft(null)
@@ -173,48 +201,32 @@ export default function App() {
           <Source
             thread={thread}
             onThreadChange={setThread}
-            onParsed={(nextLines, nextPairs, usedThread, notRead, notes) => {
-              setLines(nextLines)
-              setPairs(nextPairs)
+            onParsed={(nextLines, usedThread, notRead, notes) => {
               setThread(usedThread)
               setParsedThread(usedThread)
-              setSkipped(notRead)
+              const { items, setAside } = itemsFromLines(nextLines)
+              setSkipped([...notRead, ...setAside])
               setWarnings(notes)
-              setScreen('reconcile')
+              setDraft(newDraft(items))
+              setScreen('editor')
             }}
           />
         )}
 
-        {screen === 'reconcile' && (
-          <Reconcile
-            lines={lines}
-            pairs={pairs}
-            onLinesChange={(nextLines, nextPairs) => {
-              setLines(nextLines)
-              setPairs(nextPairs)
-            }}
-            stale={reconciliationStale}
-            skipped={skipped}
-            warnings={warnings}
-            onBuild={(items) => {
-              setDraft(newDraft(items))
-              setScreen('editor')
-            }}
-            onBack={() => setScreen('source')}
-          />
-        )}
 
         {screen === 'editor' && draft && (
           <QuoteEditor
             draft={draft}
             onDraftChange={setDraft}
             sourceThread={thread}
-            reconciliation={pairs}
+            skipped={skipped}
+            warnings={warnings}
+            stale={draftStale}
             onSaved={(quote) => {
               setSaved(quote)
               setScreen('document')
             }}
-            onBack={() => setScreen(pairs.length > 0 ? 'reconcile' : 'history')}
+            onBack={() => setScreen('source')}
           />
         )}
 
@@ -234,12 +246,10 @@ export default function App() {
             onOpen={(quote) => {
               setSaved(quote)
               setThread(quote.sourceThread)
-              setPairs(quote.reconciliation)
               setScreen('document')
             }}
             onClone={(quote) => {
               setThread(quote.sourceThread)
-              setPairs(quote.reconciliation)
               setDraft(draftFromQuote(quote, true))
               setScreen('editor')
             }}
