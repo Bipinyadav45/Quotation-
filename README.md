@@ -10,8 +10,7 @@ check the lines it found, save, download.
 > it if it is ever wanted back.
 >
 > What survived, because it earns its place: the parser reports **every line it could not read**,
-> and warns when the **prices came from a superseded message** in a forwarded chain. Each of those sends the customer's
-procurement system back for another round.
+> and warns when the **prices came from a superseded message** in a forwarded chain.
 
 Built to [PROMPT.md](PROMPT.md).
 
@@ -97,24 +96,26 @@ to `server/scripts/build-template.ts`.
 
 ## Where this departs from PROMPT.md
 
-Four places, each with a regression test. The full reasoning is in the plan; the short version:
+Each has a regression test. The full reasoning is in [PROJECT-LOG.md](PROJECT-LOG.md).
 
 1. **The letterhead's body lived in a Word text box.** Rebuilt as a real table so docxtemplater's
    row loop is reliable. Header, footer, styles and the logo are copied through byte-identical —
-   there is a test asserting exactly that.
+   there is a test asserting exactly that. It also renders in Times New Roman, not Arial: 158 of
+   the original's 166 text runs name no font at all.
 2. **§7's Make column** takes the item table from five columns to six.
-3. **§6's tokenizer discarded the differences it exists to catch.** `USB-C` became `usb` and
-   `1.5` vanished entirely, so near-identical cable variants all scored 1.0 against each other
-   and pairing fell to iteration order. Hyphenated compounds and number+unit now survive, and
-   pairing uses optimal assignment rather than greedy — checked against brute force.
-4. **§6 required brand flags but §5 never defined brand extraction.** "Black i" is two words
-   with a lowercase second token; no capitalisation heuristic finds it. There is a `makes` table
-   instead, which also carries the manufacturer address §11 needs for Ariba.
+3. **§6's comparison is gone entirely**, at the desk's request — see the note at the top.
+4. **§5's parser assumes one line per item, and real mail does not.** Four threads out of the
+   desk's mailbox broke it, and each is now a fixture: a quantity on its own line
+   (`Qty- 04nos.`, whose unit defeats §5's trailing ``), an RFQ with no `Qty` keyword at all
+   (`4 nos desktop`) and the product *after* the quantity, a forwarded chain whose attachment
+   filename and `Total` rows both parsed as products, and a wrapped description whose product
+   name sat three lines above its quantity.
 
 Two smaller ones: the model is `claude-sonnet-5` (§2's `claude-sonnet-4-6` still works but is a
 generation behind), and the LLM parser uses structured outputs rather than asking for bare JSON
 and stripping fences — the response is constrained to the schema, then validated with the same
-Zod schema §5 asked for.
+Zod schema §5 asked for. §5 puts that button there for "threads the regexes cannot handle —
+tables pasted out of Excel"; a forwarded chain carrying several revisions is exactly that.
 
 ## Tests
 
@@ -125,8 +126,3 @@ npm test
 `server/src/lib/parser.test.ts` is the one to read: it carries four real threads out of the
 desk's mailbox, each added after it broke something. `server/src/lib/docx.test.ts` renders §11's
 quotation and checks every label and amount against the document Newtech actually sent.
-
-The one that matters most is `server/src/lib/reconcile.test.ts`: §11's thread, five requests,
-five offers, and **exactly two flags** — the 1 mtr / 1.5 mtr length change on line 2 and the
-dropped "Black i" on line 3. `server/src/lib/docx.test.ts` renders that quotation and checks
-every label and amount against the document Newtech actually sent.
