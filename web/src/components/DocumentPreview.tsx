@@ -14,7 +14,6 @@ export interface DocumentData {
   signatory: string
   items: Array<{ desc: string; qty: number; rate: number }>
   tax: { mode: 'IGST' | 'CGST+SGST'; rate: number }
-  /** The letterhead's fourth term is Warranty. */
   terms: { payment: string; delivery: string; prices: string; validity: string }
 }
 
@@ -173,7 +172,7 @@ export default function DocumentPreview({ data, pendingRef }: Props) {
       <p>1.&nbsp;&nbsp;&nbsp;&nbsp;Payment Terms&nbsp;&nbsp;&nbsp;&nbsp;: {data.terms.payment}</p>
       <p>2.&nbsp;&nbsp;&nbsp;&nbsp;Delivery&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: {data.terms.delivery}</p>
       <p>3.&nbsp;&nbsp;&nbsp;&nbsp;Prices&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: {data.terms.prices}</p>
-      <p>4.&nbsp;&nbsp;&nbsp;&nbsp;Warranty&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: {data.terms.validity}</p>
+      <p>4.&nbsp;&nbsp;&nbsp;&nbsp;Validity&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: {data.terms.validity}</p>
 
       <p className="mt-3">
         If you have any queries, please feel free to call us at {COMPANY.queriesNumbers}

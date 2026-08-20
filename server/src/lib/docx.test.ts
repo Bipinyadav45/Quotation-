@@ -184,7 +184,9 @@ describe('renderDocx — the golden file', () => {
     expect(text).not.toContain('Amount in words')
     expect(text).toContain('Terms and Condition:')
     expect(text).toContain('please feel free to call us at 40668812/88')
-    expect(text).toContain('Warranty')
+    // The fourth term is Validity — the date the price holds until.
+    expect(text).toContain('Validity')
+    expect(text).toContain('31st July 2026.')
   })
 
   it('expands the tax loop to two rows for an in-state customer', () => {

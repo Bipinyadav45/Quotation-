@@ -169,8 +169,37 @@ function tc(width: number, text: string, opts: CellOpts = {}): string {
   )
 }
 
-function tr(cells: string): string {
-  return `<w:tr>${cells}</w:tr>`
+/**
+ * Minimum row heights, so the table breathes the way the sent quotation does
+ * rather than sitting tight against its text.
+ *
+ * `hRule="atLeast"` throughout, as the original has it: a floor, not a ceiling,
+ * so a description wrapping to three lines grows its row instead of being
+ * clipped.
+ *
+ * The sent quotation's own figures are larger — header 655, totals 497/428/399
+ * — but it packs all five items into ONE 1593-twip row, where this emits one
+ * row per item. Reproduced literally they cost about 700 twips and pushed a
+ * five-line quotation onto a second page. These were measured down until five
+ * items fit again with the spacing still visible.
+ *
+ * The trade-off is real and worth stating: breathing room costs lines per page.
+ * Around eight items is the limit before a second page, against ten when the
+ * rows were tight.
+ */
+export const ROW_HEIGHT = {
+  header: 560,
+  item: 300,
+  subTotal: 340,
+  tax: 320,
+  total: 320,
+} as const
+
+function tr(cells: string, minHeight?: number): string {
+  const height = minHeight
+    ? `<w:trPr><w:trHeight w:hRule="atLeast" w:val="${minHeight}"/></w:trPr>`
+    : ''
+  return `<w:tr>${height}${cells}</w:tr>`
 }
 
 function tbl(cols: number[], rows: string[], opts: { borders?: boolean } = {}): string {
@@ -228,6 +257,7 @@ function buildBody(sectPr: string): string {
         tc(rate, '{rate}', { align: 'right' }) +
         tc(qty, '{qty}', { align: 'center' }) +
         tc(amount, '{amount}{/items}', { align: 'right' }),
+      ROW_HEIGHT.item,
     ),
     tr(
       tc(sr, '') +
@@ -235,6 +265,7 @@ function buildBody(sectPr: string): string {
         tc(rate, '') +
         tc(qty, '') +
         tc(amount, '{subTotal}', { align: 'right' }),
+      ROW_HEIGHT.subTotal,
     ),
     tr(
       tc(sr, '') +
@@ -242,6 +273,7 @@ function buildBody(sectPr: string): string {
         tc(rate, '') +
         tc(qty, '') +
         tc(amount, '{taxAmount}{/taxRows}', { align: 'right' }),
+      ROW_HEIGHT.tax,
     ),
     tr(
       tc(sr, '') +
@@ -249,6 +281,7 @@ function buildBody(sectPr: string): string {
         tc(rate, '') +
         tc(qty, '') +
         tc(amount, '{grandTotal}', { align: 'right', bold: true }),
+      ROW_HEIGHT.total,
     ),
   ])
 
@@ -276,7 +309,7 @@ function buildBody(sectPr: string): string {
     p('1.    Payment Terms\t: {payment}'),
     p('2.    Delivery\t\t: {delivery}'),
     p('3.    Prices\t\t: {pricesTerm}'),
-    p('4.    Warranty\t\t: {warranty}'),
+    p('4.    Validity\t\t: {validity}'),
     p(),
     p(),
     p('If you have any queries, please feel free to call us at 40668812/88'),

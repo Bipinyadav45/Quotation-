@@ -37,8 +37,8 @@ export interface RenderModel {
   payment: string
   delivery: string
   pricesTerm: string
-  /** The letterhead's fourth term is Warranty, not Validity. */
-  warranty: string
+  /** The fourth term is Validity — the date the price holds until. */
+  validity: string
   signatory: string
 }
 
@@ -72,7 +72,7 @@ export function buildRenderModel(quote: Quote): RenderModel {
     payment: quote.terms.payment,
     delivery: quote.terms.delivery,
     pricesTerm: quote.terms.prices,
-    warranty: quote.terms.validity,
+    validity: quote.terms.validity,
     signatory: quote.signatory,
   }
 }
