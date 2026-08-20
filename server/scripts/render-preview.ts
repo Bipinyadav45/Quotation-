@@ -27,56 +27,73 @@ import { renderDocx } from '../src/lib/docx.js'
 import { cleanTempDir, converterStatus, docxToPdf } from '../src/lib/pdf.js'
 
 const OUT = path.resolve(ROOT, '.preview')
+/**
+ * The quotation the desk supplied as definitive, and the one the template was
+ * rebuilt from. It replaced the Morgan Stanley sample as the reference: that
+ * one is a blank-letterhead-shaped document with single-line descriptions,
+ * where this is a real sent quotation with product names, specifications and a
+ * grouped accessory — the shape the layout actually has to survive.
+ */
 const SAMPLE = path.resolve(
   ROOT,
-  'Quotation-Morgan Stanley - 10th July 2026 -- Black i USB, Lightning & Logitech - 01 No.(Sample).docx',
+  'Quotation-DGSL(Pondicherry) 23rd June 2026 -- HP ProBook - 06 Nos. & HP 280 G9 - 25 Nos.docx',
 )
 
-/** §11's quotation, exactly as Newtech sent it. */
+/** That quotation's own contents, so ours and theirs are the same document. */
 const QUOTE: Quote = {
   id: 'preview',
-  ref: 'NCS/2026-27/Quotes/RG/030',
+  ref: 'NCS/2026-27/Quotes/RG/026',
   revision: 0,
-  date: '2026-07-10',
+  date: '2026-06-23',
   customer: {
-    name: 'Morgan Stanley Advantage Services Pvt Ltd',
-    address: 'Campus 8B, Sarjapur, Marathahalli\nOuter Ring Road, Bengaluru - 560103',
-    attention: 'Mr. Subhransu Kar.',
-    state: 'Karnataka',
+    name: 'Datamatics Global Services Limited.',
+    address:
+      'R.S No.181/5, East Coast Rd Opp. Sankara Vidhyalaya School Lawspet Post\nPuducherry \u2013 605008.',
+    attention: 'Mr. Mahesh Jathar.',
+    state: 'Puducherry',
   },
   contact: '022-40668809',
   email: 'rakhi.gupte@newtech.in',
   signatory: 'Rakhi Gupte',
+  /**
+   * Four lines where the original has two rows: it groups each accessory into
+   * the row of the product it belongs to, and a {#items} loop gives one row per
+   * item. The content and every figure are identical; only the row grouping
+   * differs, and it is the one place ours will not overlay theirs exactly.
+   */
   items: [
-    { desc: 'Black i USB-C to USB-A 1.5 mtr', make: 'Black i', partCode: '', qty: 2, rate: 55_000 },
-    { desc: 'Black i USB-C to USB-C 1.5 mtr', make: 'Black i', partCode: '', qty: 2, rate: 85_000 },
-    { desc: 'Lightning to USB A 1.5 mtr', make: 'Black i', partCode: '', qty: 2, rate: 125_000 },
     {
-      desc: 'Black i USB Type C Docking Station with USB A and USB C ports - BI-TCHUGP',
-      make: 'Black i',
-      partCode: 'BI-TCHUGP',
-      qty: 1,
-      rate: 275_000,
+      desc:
+        'HP ProBook 4 G1iR ProBook/440 G11\n' +
+        'U5-125U/16GB/1TB SSD/FHD 300 Nits/BLK/FPR/MII/Win 11 Pro/1 Yr Onsite/ Bag',
+      make: 'HP',
+      partCode: '440 G11',
+      qty: 6,
+      rate: 10_000_000,
     },
+    { desc: '3 Years NBD and 3 Years ADP', make: 'HP', partCode: '', qty: 6, rate: 650_000 },
     {
-      desc: 'Logitech Wireless Keyboard and Mouse Set #MK540',
-      make: 'Logitech',
-      partCode: 'MK540',
-      qty: 1,
-      rate: 345_000,
+      desc:
+        'HP 280 G9 MT ( MII )\n' +
+        'Core i5-14500,  8GB DDR5, 512GB SSD,  Wi-Fi, Onboard, , Win 11 Pro., 3 Years Warranty',
+      make: 'HP',
+      partCode: '280 G9',
+      qty: 25,
+      rate: 7_940_000,
     },
+    { desc: 'Additional 8GB HP Memory', make: 'HP', partCode: '', qty: 25, rate: 1_200_000 },
   ],
   tax: { mode: 'IGST', rate: 18 },
   terms: {
     payment: '100% Advance',
-    delivery: '1-2 Weeks after PO',
-    prices: 'All-inclusive as per the quote',
+    delivery: '5 -6 Days',
+    prices: 'All Inclusive as per the quote',
     validity: '31st July 2026.',
   },
-  totals: { sub: 1_150_000, tax: 207_000, total: 1_357_000 },
+  totals: { sub: 292_400_000, tax: 52_632_000, total: 345_032_000 },
   sourceThread: '',
   status: 'draft',
-  createdAt: '2026-07-10T00:00:00.000Z',
+  createdAt: '2026-06-23T00:00:00.000Z',
 }
 
 async function main(): Promise<void> {

@@ -1,6 +1,8 @@
+import { Fragment } from 'react'
 import { COMPANY } from '@shared/company'
+import { splitDescription } from '@shared/description'
 import { computeTotals, formatPaise, pad2 } from '@shared/money'
-import { formatDateLong, fromISODate } from '@shared/fy'
+import { ORDINAL_SUFFIX_RE, formatDateParts, fromISODate } from '@shared/fy'
 
 export interface DocumentData {
   /** Empty until the quotation is saved and takes a number. */
@@ -24,6 +26,47 @@ interface Props {
 }
 
 /**
+ * Column widths as percentages of the real table widths, so the preview has the
+ * same proportions as the document rather than proportions that merely look
+ * about right. Straight from build-template.ts.
+ */
+const HEADER_W = [5098, 4536] // the 142-twip spacer folds into the right-hand cell
+const ITEM_W = [562, 5529, 1417, 709, 1559]
+const pct = (widths: number[], i: number) =>
+  `${((widths[i]! / widths.reduce((a, b) => a + b, 0)) * 100).toFixed(2)}%`
+
+/**
+ * The terms block sits in its own text box in the document, 55.5pt from the
+ * page edge where the body's is at 33.75pt — so it steps in by 21.75pt of a
+ * 524.15pt body. Its colons all land 109.3pt into a 498.75pt block.
+ *
+ * Held as percentages so the proportions survive the preview being narrower
+ * than a page.
+ */
+const TERMS_STEP = `${((21.75 / 524.15) * 100).toFixed(2)}%`
+const TERMS_COLON = `${((109.3 / 498.75) * 100).toFixed(2)}%`
+
+const CELL = 'border border-ink/30 p-1 align-top'
+/** The document fills the whole address block with a 5% grey. */
+const SHADED = `${CELL} bg-ink/[0.04]`
+
+/**
+ * Raise the suffix of any ordinal, so "6th Floor" reads "6^th Floor" as it does
+ * on the letterhead. Same regex the template builder uses, from shared/fy.ts.
+ */
+function withOrdinals(text: string) {
+  const out: Array<string | JSX.Element> = []
+  let cursor = 0
+  for (const match of text.matchAll(ORDINAL_SUFFIX_RE)) {
+    out.push(text.slice(cursor, match.index))
+    out.push(<sup key={match.index}>{match[0]}</sup>)
+    cursor = match.index + match[0].length
+  }
+  out.push(text.slice(cursor))
+  return out
+}
+
+/**
  * The quotation as it will read on the letterhead, rendered from whatever is in
  * the form right now.
  *
@@ -35,33 +78,45 @@ interface Props {
  * the one place in the application that is not the dense back-office sans.
  *
  * Every line of it mirrors server/scripts/build-template.ts, paragraph for
- * paragraph, so what is on screen and what downloads say the same thing. Change
- * one and change the other.
+ * paragraph and cell for cell — the column proportions, which lines are bold,
+ * which are centred, and the blank line inside each item row. Change one and
+ * change the other.
  *
  * It is still a representation, not a rendering: the Word file and the PDF come
- * from the real letterhead. This shows content and order.
+ * from the real letterhead. This shows content, order and emphasis.
  */
 export default function DocumentPreview({ data, pendingRef }: Props) {
   const totals = computeTotals(data.items, data.tax.mode, data.tax.rate)
   const reference = data.ref || pendingRef || '—'
+  const date = formatDateParts(fromISODate(data.date))
+  // The serial-number column merges downward from the last line item, so one
+  // unbroken cell runs past Sub Total, the tax rows and Total.
+  const totalsRows = 2 + totals.taxRows.length
+  const lastItem = data.items.length - 1
 
   return (
     <div className="panel bg-paper-raised p-6 font-serif text-[12px] leading-relaxed">
-      <table className="mb-3 w-full border border-ink/30">
+      <table className="mb-3 w-full table-fixed border border-ink/30">
         <tbody>
+          {/* Bold, from the document's Heading4 style, and the ordinal in the
+              date is raised. */}
           <tr>
-            <td className="border border-ink/30 p-1.5 font-bold" colSpan={2}>
+            <td className={`${SHADED} font-bold`} colSpan={2}>
               Ref: {reference}
               {data.revision > 0 && ` (Rev ${data.revision})`}
               <br />
-              Date: {formatDateLong(fromISODate(data.date))}
+              Date: {date.day}
+              <sup>{date.ordinal}</sup>
+              {date.rest}
             </td>
           </tr>
           <tr>
-            <td className="w-1/2 border border-ink/30 p-1.5 align-top">
+            <td className={SHADED} style={{ width: pct(HEADER_W, 0) }}>
               <span className="font-bold">To: </span>
               <br />
-              {data.customer.name || <span className="text-ink-faint">(customer)</span>}
+              <span className="font-bold">
+                {data.customer.name || <span className="font-normal text-ink-faint">(customer)</span>}
+              </span>
               {data.customer.address
                 .split('\n')
                 .filter(Boolean)
@@ -72,24 +127,24 @@ export default function DocumentPreview({ data, pendingRef }: Props) {
                   </span>
                 ))}
             </td>
-            <td className="border border-ink/30 p-1.5 align-top">
-              From:
+            <td className={SHADED} style={{ width: pct(HEADER_W, 1) }}>
+              <span className="font-bold">From: </span>
               <br />
               <span className="font-bold">{COMPANY.name}</span>
               {COMPANY.addressLines.map((l) => (
                 <span key={l}>
                   <br />
-                  {l}
+                  {withOrdinals(l)}
                 </span>
               ))}
             </td>
           </tr>
           <tr>
-            <td className="border border-ink/30 p-1.5">Contact Number: {data.contact}</td>
-            <td className="border border-ink/30 p-1.5">Email: {data.email}</td>
+            <td className={SHADED}>Contact Number:{data.contact}</td>
+            <td className={SHADED}>Email: {data.email}</td>
           </tr>
           <tr>
-            <td className="border border-ink/30 p-1.5 text-center font-bold" colSpan={2}>
+            <td className={`${SHADED} text-center font-bold`} colSpan={2}>
               Kind Attention: {data.customer.attention}
             </td>
           </tr>
@@ -101,14 +156,22 @@ export default function DocumentPreview({ data, pendingRef }: Props) {
       {/* Heading5 in the letterhead: centred, bold, underlined. */}
       <p className="my-2 text-center font-bold underline">Quotation</p>
 
-      <table className="w-full border border-ink/30 text-[11.5px]">
+      <table className="w-full table-fixed border border-ink/30 text-[11.5px]">
         <thead>
           <tr className="font-bold">
-            <th className="w-[6%] border border-ink/30 p-1">Sr. No</th>
-            <th className="w-[54%] border border-ink/30 p-1">Product Name and Description</th>
-            <th className="w-[13%] border border-ink/30 p-1">Rate (Rupees)</th>
-            <th className="w-[9%] border border-ink/30 p-1">Qty.</th>
-            <th className="w-[18%] border border-ink/30 p-1">
+            <th className={`${CELL} text-center`} style={{ width: pct(ITEM_W, 0) }}>
+              Sr. No
+            </th>
+            <th className={`${CELL} text-center`} style={{ width: pct(ITEM_W, 1) }}>
+              Product Name and Description
+            </th>
+            <th className={`${CELL} text-center`} style={{ width: pct(ITEM_W, 2) }}>
+              Rate (Rupees)
+            </th>
+            <th className={`${CELL} text-center`} style={{ width: pct(ITEM_W, 3) }}>
+              Qty.
+            </th>
+            <th className={`${CELL} text-center`} style={{ width: pct(ITEM_W, 4) }}>
               Amount
               <br />
               (Rupees)
@@ -118,70 +181,116 @@ export default function DocumentPreview({ data, pendingRef }: Props) {
         <tbody>
           {data.items.length === 0 && (
             <tr>
-              <td className="border border-ink/30 p-2 text-center text-ink-faint" colSpan={5}>
+              <td className={`${CELL} p-2 text-center text-ink-faint`} colSpan={5}>
                 No lines yet
               </td>
             </tr>
           )}
-          {data.items.map((item, i) => (
-            <tr key={i}>
-              <td className="border border-ink/30 p-1 text-center align-top">{pad2(i + 1)}</td>
-              <td className="whitespace-pre-line border border-ink/30 p-1 align-top">
-                {item.desc}
-              </td>
-              <td className="border border-ink/30 p-1 text-right align-top">
-                {formatPaise(item.rate)}
-              </td>
-              <td className="border border-ink/30 p-1 text-center align-top">{pad2(item.qty)}</td>
-              <td className="border border-ink/30 p-1 text-right align-top">
-                {formatPaise(item.qty * item.rate)}
-              </td>
-            </tr>
-          ))}
+          {/* Each cell opens with a blank line and the description carries a
+              second one between the name and the specification. That spacing is
+              the document's, and it is what lines the figures up with the
+              product name instead of the line above it. */}
+          {data.items.map((item, i) => {
+            const { descName, descSpec } = splitDescription(item.desc)
+            return (
+              <tr key={i}>
+                <td className={CELL} rowSpan={i === lastItem ? totalsRows + 1 : 1}>
+                  <br />
+                  {pad2(i + 1)}
+                </td>
+                <td className={CELL}>
+                  <br />
+                  <span className="font-bold underline">{descName}</span>
+                  {descSpec && (
+                    <>
+                      <br />
+                      <br />
+                      <span className="whitespace-pre-line">{descSpec}</span>
+                    </>
+                  )}
+                </td>
+                <td className={`${CELL} text-center`}>
+                  <br />
+                  {formatPaise(item.rate)}
+                </td>
+                <td className={`${CELL} text-center`}>
+                  <br />
+                  {pad2(item.qty)}
+                </td>
+                <td className={`${CELL} text-center`}>
+                  <br />
+                  {formatPaise(item.qty * item.rate)}
+                </td>
+              </tr>
+            )
+          })}
+          {/* Five cells, not a colSpan: the label sits under the description
+              column and the figure under the amount column, with the rate and
+              quantity columns left empty. Both are centred. */}
+          {/* No cell of their own: the serial column above spans down over
+              them, which is what leaves the totals block with no rule across
+              its left edge. Only an empty quotation has nothing to span from. */}
           <tr>
-            <td className="border border-ink/30 p-1" />
-            <td className="border border-ink/30 p-1 text-center" colSpan={3}>
-              Sub Total
-            </td>
-            <td className="border border-ink/30 p-1 text-right font-bold">
-              {formatPaise(totals.sub)}
-            </td>
+            {data.items.length === 0 && <td className={CELL} />}
+            <td className={`${CELL} text-center`}>Sub Total</td>
+            <td className={CELL} />
+            <td className={CELL} />
+            <td className={`${CELL} text-center`}>{formatPaise(totals.sub)}</td>
           </tr>
           {totals.taxRows.map((row) => (
             <tr key={row.label}>
-              <td className="border border-ink/30 p-1" />
-              <td className="border border-ink/30 p-1 text-center" colSpan={3}>
-                {row.label}
-              </td>
-              <td className="border border-ink/30 p-1 text-right">{formatPaise(row.paise)}</td>
+              {data.items.length === 0 && <td className={CELL} />}
+              <td className={`${CELL} text-center`}>{row.label}</td>
+              <td className={CELL} />
+              <td className={CELL} />
+              <td className={`${CELL} text-center`}>{formatPaise(row.paise)}</td>
             </tr>
           ))}
           <tr>
-            <td className="border border-ink/30 p-1" />
-            <td className="border border-ink/30 p-1 text-center font-bold" colSpan={3}>
-              Total Amount
-            </td>
-            <td className="border border-ink/30 p-1 text-right font-bold">
-              {formatPaise(totals.total)}
-            </td>
+            {data.items.length === 0 && <td className={CELL} />}
+            <td className={`${CELL} text-center font-bold`}>Total Amount</td>
+            <td className={CELL} />
+            <td className={CELL} />
+            <td className={`${CELL} text-center font-bold`}>{formatPaise(totals.total)}</td>
           </tr>
         </tbody>
       </table>
 
-      <p className="mt-3 font-bold">Terms and Condition:</p>
-      <p>1.&nbsp;&nbsp;&nbsp;&nbsp;Payment Terms&nbsp;&nbsp;&nbsp;&nbsp;: {data.terms.payment}</p>
-      <p>2.&nbsp;&nbsp;&nbsp;&nbsp;Delivery&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: {data.terms.delivery}</p>
-      <p>3.&nbsp;&nbsp;&nbsp;&nbsp;Prices&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: {data.terms.prices}</p>
-      <p>4.&nbsp;&nbsp;&nbsp;&nbsp;Validity&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: {data.terms.validity}</p>
+      {/* Everything from here down is stepped in, because in the document it
+          lives in a second text box set further from the edge than the one
+          above it. */}
+      <div className="mt-3" style={{ paddingLeft: TERMS_STEP }}>
+        <p className="font-bold">Terms and Conditions:</p>
+        {/* A two-column grid rather than counted spaces, so all four colons
+            land in one column exactly as the template's tab stop puts them. */}
+        <div className="grid" style={{ gridTemplateColumns: `${TERMS_COLON} 1fr` }}>
+          {(
+            [
+              ['1.', 'Payment Terms', data.terms.payment],
+              ['2.', 'Delivery', data.terms.delivery],
+              ['3.', 'Prices', data.terms.prices],
+              ['4.', 'Validity', data.terms.validity],
+            ] as const
+          ).map(([n, label, value]) => (
+            <Fragment key={n}>
+              <span>
+                {n}&nbsp;&nbsp;&nbsp;&nbsp;{label}
+              </span>
+              <span>: {value}</span>
+            </Fragment>
+          ))}
+        </div>
 
-      <p className="mt-3">
-        If you have any queries, please feel free to call us at {COMPANY.queriesNumbers}
-      </p>
-      <p>Looking forward to an encouraging and early response.</p>
-      <p className="mt-3">&nbsp;&nbsp;&nbsp;&nbsp;Thanking You,</p>
-      <p className="mt-2 font-bold">Yours Truly,</p>
-      <p className="font-bold">{COMPANY.closingFor}</p>
-      <p className="mt-4 font-bold">{data.signatory}</p>
+        <p className="mt-3">
+          If you have any queries, please feel free to call us at {COMPANY.queriesNumbers}
+        </p>
+        <p>Looking forward to an encouraging and early response.</p>
+        <p className="mt-3">Thanking you,</p>
+        <p className="mt-4 font-bold">Yours Truly,</p>
+        <p className="font-bold">{COMPANY.closingFor}</p>
+        {/* Three blank lines, the room left for a wet signature. */}
+        <p className="mt-12 font-bold">{data.signatory}</p>
+      </div>
     </div>
   )
 }

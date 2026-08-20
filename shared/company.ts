@@ -4,10 +4,14 @@
  */
 export const COMPANY = {
   name: 'Newtech Computer Services Pvt. Ltd.',
+  /**
+   * Two lines, exactly as the sent quotation breaks them. It used to be three,
+   * with Powai and Mumbai split — which is how the blank letterhead has it, but
+   * not how the document the customer receives does.
+   */
   addressLines: [
     '6th Floor, Solaris-II, Opp L&T Gate-6,',
-    'Saki Vihar Road, Powai,',
-    'Mumbai- 400072.',
+    'Saki Vihar Road, Powai, Mumbai - 400072.',
   ],
   tel: '022 40668888',
   cin: 'U99999MH1984PTC034412',

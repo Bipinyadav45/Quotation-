@@ -3,7 +3,8 @@ import PizZip from 'pizzip'
 import { readFileSync } from 'node:fs'
 import type { Quote } from '@shared/schema.js'
 import { computeTotals, formatPaise, pad2 } from '@shared/money.js'
-import { formatDateLong, fromISODate } from '@shared/fy.js'
+import { formatDateParts, fromISODate } from '@shared/fy.js'
+import { splitDescription } from '@shared/description.js'
 import { config } from '../config.js'
 
 /**
@@ -18,7 +19,15 @@ import { config } from '../config.js'
 
 export interface RenderModel {
   ref: string
-  dateLong: string
+  /**
+   * The date in three pieces because the quotation raises the ordinal —
+   * "23^rd June 2026." Word can only superscript a whole run, and a
+   * docxtemplater tag IS one run, so the split has to happen before the
+   * template sees it. See formatDateParts() in shared/fy.ts.
+   */
+  dateDay: string
+  dateOrd: string
+  dateRest: string
   customerName: string
   customerAddress: string
   attention: string
@@ -26,7 +35,10 @@ export interface RenderModel {
   email: string
   items: Array<{
     sr: string
-    desc: string
+    /** The product name — printed bold and underlined. */
+    descName: string
+    /** The specification beneath it — printed plain. */
+    descSpec: string
     rate: string
     qty: string
     amount: string
@@ -49,7 +61,10 @@ export function buildRenderModel(quote: Quote): RenderModel {
 
   return {
     ref: quote.revision > 0 ? `${quote.ref} (Rev ${quote.revision})` : quote.ref,
-    dateLong: formatDateLong(fromISODate(quote.date)),
+    ...(() => {
+      const { day, ordinal, rest } = formatDateParts(fromISODate(quote.date))
+      return { dateDay: day, dateOrd: ordinal, dateRest: rest }
+    })(),
     customerName: quote.customer.name,
     customerAddress: quote.customer.address,
     attention: quote.customer.attention,
@@ -58,7 +73,7 @@ export function buildRenderModel(quote: Quote): RenderModel {
     items: quote.items.map((item, index) => ({
       // §7 — serial numbers and quantities zero-padded to 2 digits.
       sr: pad2(index + 1),
-      desc: item.desc,
+      ...splitDescription(item.desc),
       rate: formatPaise(item.rate),
       qty: pad2(item.qty),
       amount: formatPaise(item.qty * item.rate),

@@ -19,18 +19,52 @@ const MONTHS = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ]
 
-function ordinal(day: number): string {
+/**
+ * A number's ordinal suffix inside a longer string: the "th" of "6th Floor".
+ *
+ * The lookbehind requires a digit in front, so it cannot fire on an ordinary
+ * word ending in "st". Exported because the quotation RAISES these — both the
+ * Word template and the on-screen preview need to find them, and finding them
+ * two different ways is how the two drift apart.
+ */
+export const ORDINAL_SUFFIX_RE = /(?<=\d)(st|nd|rd|th)\b/gi
+
+/** "st" | "nd" | "rd" | "th" — the suffix alone, without the number. */
+function ordinalSuffix(day: number): string {
   // 11th, 12th and 13th are the exceptions that break the mod-10 rule.
-  if (day >= 11 && day <= 13) return `${day}th`
+  if (day >= 11 && day <= 13) return 'th'
   switch (day % 10) {
     case 1:
-      return `${day}st`
+      return 'st'
     case 2:
-      return `${day}nd`
+      return 'nd'
     case 3:
-      return `${day}rd`
+      return 'rd'
     default:
-      return `${day}th`
+      return 'th'
+  }
+}
+
+/**
+ * The house date in three pieces, because the quotation SUPERSCRIPTS the
+ * ordinal — it reads "23^rd June 2026.", not "23rd June 2026." — and Word can
+ * only raise a run, not part of one. So the document needs the suffix handed to
+ * it separately rather than buried in the middle of a formatted string.
+ */
+export interface DateParts {
+  /** "23" */
+  day: string
+  /** "rd" — the part that is raised */
+  ordinal: string
+  /** " June 2026." — including the leading space and the trailing period */
+  rest: string
+}
+
+export function formatDateParts(date: Date): DateParts {
+  return {
+    day: String(date.getDate()),
+    ordinal: ordinalSuffix(date.getDate()),
+    rest: ` ${MONTHS[date.getMonth()]} ${date.getFullYear()}.`,
   }
 }
 
@@ -38,9 +72,13 @@ function ordinal(day: number): string {
  * The house format, taken verbatim from the sample quotation: "10th July 2026."
  * The trailing period is part of it — both the Date line and the Validity term
  * carry one.
+ *
+ * Built by joining the parts rather than formatting separately, so the plain
+ * string and the superscripted one can never disagree about a date.
  */
 export function formatDateLong(date: Date): string {
-  return `${ordinal(date.getDate())} ${MONTHS[date.getMonth()]} ${date.getFullYear()}.`
+  const { day, ordinal, rest } = formatDateParts(date)
+  return `${day}${ordinal}${rest}`
 }
 
 /** §7 — validity defaults to the end of the current month. */

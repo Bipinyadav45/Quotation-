@@ -1,6 +1,6 @@
 /**
- * Rebuilds server/templates/quotation-template.docx from the hand-made
- * letterhead — CORRECTION 1.
+ * Rebuilds server/templates/quotation-template.docx from the letterhead —
+ * CORRECTION 1.
  *
  *   npm run build:template
  *
@@ -14,48 +14,67 @@
  * So the body is rebuilt as ordinary paragraphs and a real table. Everything
  * that carries the brand is copied across untouched:
  *
- *   word/header1.xml   the logo            byte-identical
- *   word/footer1.xml   address + CIN rule  byte-identical
+ *   word/header1.xml   the logo             byte-identical
+ *   word/footer1.xml   address + CIN rule   byte-identical
  *   word/styles.xml    12pt Times New Roman byte-identical
- *   word/media/*       the logo image      byte-identical
+ *   word/media/*       the logo image       byte-identical
  *   w:sectPr           page size, header/footer references
  *
+ * WHERE THE LAYOUT COMES FROM. Every measurement below was read out of the
+ * quotation the desk supplied as definitive — a real, sent quotation with
+ * contents in it, not the blank letterhead. Those two disagree, and where they
+ * do the sent one wins: it is the document the customer actually receives.
+ *
  * GEOMETRY. The original page has NO margins (`w:pgMar` is all zeros) because
- * the text box supplied the inset: it sat at 34pt from the left and was
- * 524.15pt wide, and its tables are 9464 twips across. Setting real left/right
- * page margins would be the obvious move and is WRONG — the header table is
- * 11382 twips wide, sized for a zero-margin page, so margins would push the
- * logo out of place. Instead the left/right margins stay at zero and the body
- * content is indented by hand, which reproduces the original text position and
- * leaves the header and footer exactly as they were.
+ * the text box supplied the inset: it sat at 33.75pt from the left and was
+ * 524.15pt wide. Setting real left/right page margins would be the obvious move
+ * and is WRONG — the header table is 11382 twips wide, sized for a zero-margin
+ * page, so margins would push the logo out of place. Instead the left/right
+ * margins stay at zero and the body content is indented by hand, which
+ * reproduces the original text position and leaves the header and footer
+ * exactly as they were.
  */
 
 import PizZip from 'pizzip'
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { ROOT } from '../src/config.js'
+import { COMPANY } from '@shared/company.js'
+import { ORDINAL_SUFFIX_RE } from '@shared/fy.js'
 
 const SOURCE = path.resolve(ROOT, 'Quotation -- Format.docx')
 const TARGET = path.resolve(ROOT, 'server', 'templates', 'quotation-template.docx')
 
 // --- geometry, all in twips (1/20 pt) --------------------------------------
-const BODY_INDENT_LEFT = 824 // 34pt text-box offset + its 0.1" internal inset
-const BODY_WIDTH = 9464 // the width the original tables actually are
+const BODY_INDENT_LEFT = 819 // 33.75pt text-box offset + its 0.1" internal inset
+const BODY_WIDTH = 9776 // the width the item table actually is
 const PAGE_WIDTH = 11909 // A4
-const BODY_INDENT_RIGHT = PAGE_WIDTH - BODY_INDENT_LEFT - BODY_WIDTH // 1621
-
-/** Two columns, as the original address block. 4577 + 4887 = 9464. */
-const HEADER_COLS = [4577, 4887]
+const BODY_INDENT_RIGHT = PAGE_WIDTH - BODY_INDENT_LEFT - BODY_WIDTH
 
 /**
- * The item table, exactly as the letterhead has it: five columns totalling
- * 9493 twips.
+ * The terms and the closing sit further in than everything above them, because
+ * in the original they are a SECOND text box — at 55.5pt where the main one is
+ * at 33.75pt, and 498.75pt wide where it is 524.15pt.
  *
- * There was a sixth here — a Make column, added because §7 asked for one. It is
- * gone. The instruction is to reproduce this document and add nothing to it,
- * and a column the letterhead does not have is an addition however useful.
+ * There are no text boxes here any more, so the offset has to be applied as a
+ * paragraph indent. Miss it and the terms line up under the item table instead
+ * of stepping in from it, which is the difference between the two halves of the
+ * page looking deliberate and looking misaligned.
  */
-const ITEM_COLS = [562, 5103, 1276, 851, 1701]
+const TERMS_INDENT_LEFT = 1254 // 55.5pt + the 0.1" internal inset
+const TERMS_INDENT_RIGHT = PAGE_WIDTH - TERMS_INDENT_LEFT - 9975 // 498.75pt wide
+
+/**
+ * The address block is THREE columns, not two: 5098 + 142 + 4394 = 9634.
+ *
+ * The 142-twip middle column is a spacer, and it is there because the rows
+ * split at different points — To/From at 5098, Contact/Email at 5240. Two
+ * columns cannot express that; three can, with each row spanning what it needs.
+ */
+const HEADER_COLS = [5098, 142, 4394]
+
+/** The item table: five columns totalling 9776. */
+const ITEM_COLS = [562, 5529, 1417, 709, 1559]
 
 // --- XML helpers -----------------------------------------------------------
 
@@ -76,11 +95,15 @@ const esc = (s: string) =>
  * *referenced* anywhere in the package rather than the fonts the body actually
  * uses. It rendered the whole quotation in the wrong face.)
  */
-function rPr(opts: { bold?: boolean; italic?: boolean } = {}): string {
+function rPr(
+  opts: { bold?: boolean; italic?: boolean; underline?: boolean; superscript?: boolean } = {},
+): string {
   return (
     '<w:rPr>' +
     (opts.bold ? '<w:b/><w:bCs/>' : '') +
     (opts.italic ? '<w:i/>' : '') +
+    (opts.underline ? '<w:u w:val="single"/>' : '') +
+    (opts.superscript ? '<w:vertAlign w:val="superscript"/>' : '') +
     '<w:sz w:val="24"/><w:szCs w:val="24"/>' +
     '</w:rPr>'
   )
@@ -89,11 +112,48 @@ function rPr(opts: { bold?: boolean; italic?: boolean } = {}): string {
 interface RunOpts {
   bold?: boolean
   italic?: boolean
+  underline?: boolean
+  superscript?: boolean
   /**
-   * Bold only these lines of a multi-line cell. The letterhead bolds "To:" and
-   * the company name under "From:" but not the address lines beneath either.
+   * Raise the suffix of any ordinal in the text — "6th Floor" becomes
+   * "6^th Floor", which is how the letterhead has it.
+   *
+   * Only useful on STATIC text. A docxtemplater tag is one run, and the value
+   * substituted into it inherits that run's formatting whole, so an ordinal
+   * arriving through a tag has to be split before it gets here — which is what
+   * formatDateParts() in shared/fy.ts is for.
+   */
+  ordinals?: boolean
+  /**
+   * Bold only these lines of a multi-line run. Kept for callers that build a
+   * whole block from one string.
    */
   boldLines?: number[]
+}
+
+/** One run of text — or several, when an ordinal inside it has to be raised. */
+function textRuns(text: string, opts: RunOpts, leading = ''): string {
+  const t = (s: string) => `<w:t xml:space="preserve">${esc(s)}</w:t>`
+  const matches = opts.ordinals ? [...text.matchAll(ORDINAL_SUFFIX_RE)] : []
+
+  if (matches.length === 0) return `<w:r>${rPr(opts)}${leading}${t(text)}</w:r>`
+
+  const out: string[] = []
+  let cursor = 0
+  let prefix = leading
+
+  for (const match of matches) {
+    const before = text.slice(cursor, match.index)
+    if (before) out.push(`<w:r>${rPr(opts)}${prefix}${t(before)}</w:r>`)
+    else if (prefix) out.push(`<w:r>${rPr(opts)}${prefix}</w:r>`)
+    prefix = ''
+    out.push(`<w:r>${rPr({ ...opts, superscript: true })}${t(match[0])}</w:r>`)
+    cursor = match.index + match[0].length
+  }
+
+  const tail = text.slice(cursor)
+  if (tail) out.push(`<w:r>${rPr(opts)}${t(tail)}</w:r>`)
+  return out.join('')
 }
 
 /** Text with \n turned into real line breaks and \t into tabs. */
@@ -102,17 +162,20 @@ function runs(text: string, opts: RunOpts = {}): string {
   return text
     .split('\n')
     .map((lineText, lineIndex) => {
-      const parts = lineText.split('\t')
-      const inner = parts
+      const bold = opts.bold || opts.boldLines?.includes(lineIndex) === true
+      const lineOpts = { ...opts, bold }
+      const br = lineIndex > 0 ? '<w:br/>' : ''
+
+      // A tab is an element rather than a character, so text and tabs alternate
+      // as separate runs within the line.
+      return lineText
+        .split('\t')
         .map((part, i) => {
-          const tab = i > 0 ? '<w:tab/>' : ''
-          return part === ''
-            ? tab
-            : `${tab}<w:t xml:space="preserve">${esc(part)}</w:t>`
+          const leading = (i === 0 ? br : '') + (i > 0 ? '<w:tab/>' : '')
+          if (part === '') return leading ? `<w:r>${rPr(lineOpts)}${leading}</w:r>` : ''
+          return textRuns(part, lineOpts, leading)
         })
         .join('')
-      const bold = opts.bold || opts.boldLines?.includes(lineIndex) === true
-      return `<w:r>${rPr({ ...opts, bold })}${lineIndex > 0 ? '<w:br/>' : ''}${inner}</w:r>`
     })
     .join('')
 }
@@ -129,15 +192,31 @@ interface ParaOpts extends RunOpts {
   style?: string
   /** Suppress the standard body indent — used inside table cells. */
   bare?: boolean
+  /** Override the body indent, for the terms block's deeper one. */
+  indent?: { left: number; right: number }
   spaceAfter?: number
   tabs?: number[]
 }
 
+/** The terms and everything below them, stepped in from the item table. */
+const TERMS: ParaOpts = { indent: { left: TERMS_INDENT_LEFT, right: TERMS_INDENT_RIGHT } }
+
+/**
+ * Where the colon lands on all four numbered terms — measured off the original,
+ * where every one of them sits 172pt from the left edge of the page.
+ *
+ * The original gets there by accident: three of the lines tab to it and the
+ * fourth pads with spaces until it happens to line up at that exact indent, in
+ * that exact font. An explicit stop reaches the same column on purpose, and it
+ * stays there if a term is ever renamed to a word of a different length.
+ */
+const TERM_COLON_TAB = 3413
+const TERMS_NUMBERED: ParaOpts = { ...TERMS, tabs: [TERM_COLON_TAB] }
+
 function p(text = '', opts: ParaOpts = {}): string {
   const style = opts.style ? `<w:pStyle w:val="${opts.style}"/>` : ''
-  const ind = opts.bare
-    ? ''
-    : `<w:ind w:left="${BODY_INDENT_LEFT}" w:right="${BODY_INDENT_RIGHT}"/>`
+  const indent = opts.indent ?? { left: BODY_INDENT_LEFT, right: BODY_INDENT_RIGHT }
+  const ind = opts.bare ? '' : `<w:ind w:left="${indent.left}" w:right="${indent.right}"/>`
   const jc = opts.align && opts.align !== 'left' ? `<w:jc w:val="${opts.align}"/>` : ''
   const spacing = `<w:spacing w:after="${opts.spaceAfter ?? 0}" w:line="240" w:lineRule="auto"/>`
   const tabs = opts.tabs?.length
@@ -157,42 +236,84 @@ interface CellOpts extends RunOpts {
   align?: 'left' | 'center' | 'right'
   /** Merge horizontally across this many columns. */
   span?: number
+  /** `w:shd` fill pattern, e.g. "pct5". */
+  shading?: string
 }
 
-function tc(width: number, text: string, opts: CellOpts = {}): string {
-  const span = opts.span && opts.span > 1 ? `<w:gridSpan w:val="${opts.span}"/>` : ''
+/** A paragraph as it appears inside a table cell — no body indent. */
+function cp(text = '', opts: CellOpts = {}): string {
+  return p(text, { ...opts, bare: true })
+}
+
+/** The 5% grey the whole address block is filled with. */
+const HEADER_SHADING = 'pct5'
+
+interface StructuralCellOpts {
+  span?: number
+  /** `w:shd` fill pattern, e.g. "pct5". */
+  shading?: string
+  /**
+   * Vertical merge. "restart" opens a merged run, "continue" extends the one
+   * above it — which is how the serial-number column runs unbroken from the
+   * last line item down past Sub Total, GST and Total, with no rules across it.
+   */
+  vMerge?: 'restart' | 'continue'
+}
+
+/**
+ * A cell built from paragraph XML rather than from a string, so one cell can
+ * mix weights. The address block needs it — "To:" and the customer name are
+ * bold and the address beneath them is not — and so does a line item, where the
+ * product name is bold and underlined above a plain specification.
+ *
+ * The child order here is not arbitrary: `w:tcPr` is a sequence, and Word
+ * rejects a document whose properties are out of it. tcW, gridSpan, vMerge,
+ * shd, vAlign.
+ */
+function cell(width: number, body: string, opts: StructuralCellOpts = {}): string {
+  const span = opts.span ?? 1
   return (
     '<w:tc>' +
-    `<w:tcPr><w:tcW w:w="${width}" w:type="dxa"/>${span}<w:vAlign w:val="top"/></w:tcPr>` +
-    p(text, { ...opts, bare: true }) +
+    `<w:tcPr><w:tcW w:w="${width}" w:type="dxa"/>` +
+    (span > 1 ? `<w:gridSpan w:val="${span}"/>` : '') +
+    (opts.vMerge === 'restart'
+      ? '<w:vMerge w:val="restart"/>'
+      : opts.vMerge === 'continue'
+        ? '<w:vMerge/>'
+        : '') +
+    (opts.shading ? `<w:shd w:val="${opts.shading}" w:color="auto" w:fill="auto"/>` : '') +
+    '<w:vAlign w:val="top"/></w:tcPr>' +
+    (body || cp()) +
     '</w:tc>'
   )
 }
 
+/** The common case: one paragraph, one formatting. */
+function tc(width: number, text: string, opts: CellOpts = {}): string {
+  return cell(width, cp(text, opts), { span: opts.span, shading: opts.shading })
+}
+
 /**
- * Minimum row heights, so the table breathes the way the sent quotation does
- * rather than sitting tight against its text.
+ * Minimum row heights, read off the definitive quotation. `hRule="atLeast"` is
+ * a floor, not a ceiling, so a description that wraps grows its row instead of
+ * being clipped.
  *
- * `hRule="atLeast"` throughout, as the original has it: a floor, not a ceiling,
- * so a description wrapping to three lines grows its row instead of being
- * clipped.
- *
- * The sent quotation's own figures are larger — header 655, totals 497/428/399
- * — but it packs all five items into ONE 1593-twip row, where this emits one
- * row per item. Reproduced literally they cost about 700 twips and pushed a
- * five-line quotation onto a second page. These were measured down until five
- * items fit again with the spacing still visible.
- *
- * The trade-off is real and worth stating: breathing room costs lines per page.
- * Around eight items is the limit before a second page, against ten when the
- * rows were tight.
+ * They are only a floor, because the table does not get its air from forced row
+ * heights — it gets it from BLANK PARAGRAPHS inside the cells. That is how the
+ * original does it, and it is the more robust of the two: a blank line stays
+ * exactly one line however long the description runs, where a forced height
+ * either wastes space on a short item or does nothing at all on a long one.
  */
 export const ROW_HEIGHT = {
-  header: 560,
+  headerRef: 542,
+  headerTo: 1339,
+  headerContact: 346,
+  headerAttention: 262,
+  itemHeader: 655,
   item: 300,
-  subTotal: 340,
-  tax: 320,
-  total: 320,
+  subTotal: 480,
+  tax: 441,
+  total: 264,
 } as const
 
 function tr(cells: string, minHeight?: number): string {
@@ -222,24 +343,86 @@ function tbl(cols: number[], rows: string[], opts: { borders?: boolean } = {}): 
 // --- the document body -----------------------------------------------------
 
 function buildBody(sectPr: string): string {
-  const [c1, c2] = HEADER_COLS as [number, number]
+  const [h1, h2, h3] = HEADER_COLS as [number, number, number]
   const [sr, desc, rate, qty, amount] = ITEM_COLS as [number, number, number, number, number]
 
-  // Header block. Ref and Date share one merged cell; "To:" is bold and so is
-  // the company name under "From:"; Kind Attention is centred and bold.
+  // Ref and Date are two paragraphs in one cell spanning all three columns.
+  // Rows 2 and 3 each span what they need, which is what the 142-twip spacer
+  // column exists to allow.
+  // Every cell in this table carries a 5% grey fill. It is subtle enough to be
+  // easy to miss and it is the reason the block reads as a block.
+  const shaded = (width: number, body: string, span?: number) =>
+    cell(width, body, { span, shading: HEADER_SHADING })
+
   const addressBlock = tbl(HEADER_COLS, [
-    tr(tc(c1 + c2, 'Ref: {ref}\nDate: {dateLong}', { span: 2 })),
     tr(
-      tc(c1, 'To: \n{customerName}\n{customerAddress}', { boldFirstLine: true }) +
-        tc(
-          c2,
-          'From: \nNewtech Computer Services Pvt. Ltd.\n6th Floor, Solaris-II, Opp L&T Gate-6,\nSaki Vihar Road, Powai,\nMumbai-400072.',
-          { boldLine: 1 },
-        ),
+      // Heading4 is where the bold comes from — the runs themselves carry none.
+      // The style also sets 11pt, which the document overrides back to 12pt on
+      // the run, and so does p().
+      shaded(
+        h1 + h2 + h3,
+        cp('Ref: {ref}', { style: 'Heading4' }) +
+          // Three tags, not one: the ordinal is raised, and Word can only raise
+          // a whole run. shared/fy.ts hands the date over pre-split for exactly
+          // this. Rendered, it reads "Date: 23^rd June 2026."
+          `<w:p><w:pPr><w:pStyle w:val="Heading4"/>` +
+          `<w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr>` +
+          runs('Date: {dateDay}', { bold: true }) +
+          runs('{dateOrd}', { bold: true, superscript: true }) +
+          runs('{dateRest}', { bold: true }) +
+          `</w:p>`,
+        3,
+      ),
+      ROW_HEIGHT.headerRef,
     ),
-    tr(tc(c1, 'Contact Number:{contact}') + tc(c2, 'Email: {email}')),
-    tr(tc(c1 + c2, 'Kind Attention: {attention}', { span: 2, bold: true, align: 'center' })),
+    tr(
+      shaded(
+        h1,
+        cp('To: ', { bold: true }) +
+          cp('{customerName}', { bold: true }) +
+          cp('{customerAddress}'),
+      ) +
+        shaded(
+          h2 + h3,
+          cp('From: ', { bold: true }) +
+            // From COMPANY, not typed out here, so the letterhead block and
+            // the on-screen preview cannot say different things.
+            cp(COMPANY.name, { bold: true }) +
+            // "6th Floor" — the letterhead raises that "th" too.
+            COMPANY.addressLines.map((line) => cp(line, { ordinals: true })).join(''),
+          2,
+        ),
+      ROW_HEIGHT.headerTo,
+    ),
+    tr(
+      shaded(h1 + h2, cp('Contact Number:{contact}'), 2) + shaded(h3, cp('Email: {email}')),
+      ROW_HEIGHT.headerContact,
+    ),
+    tr(
+      shaded(h1 + h2 + h3, cp('Kind Attention: {attention}', { bold: true, align: 'center' }), 3),
+      ROW_HEIGHT.headerAttention,
+    ),
   ])
+
+  /**
+   * Sub Total, GST and Total all have the same shape: the label under the
+   * description column, the figure under the amount column, both CENTRED — not
+   * right-aligned, which is what this used to do — and the three columns
+   * between them empty.
+   */
+  const totalRow = (label: string, value: string, height: number, bold = false) =>
+    tr(
+      // Continues the serial-number column's vertical merge rather than opening
+      // an empty bordered box, so no rule is drawn across it — which is what
+      // makes the totals read as a block hanging off the table instead of three
+      // more rows of it.
+      cell(sr, '', { vMerge: 'continue' }) +
+        tc(desc, label, { align: 'center', bold }) +
+        tc(rate, '', { align: 'center' }) +
+        tc(qty, '', { align: 'center' }) +
+        tc(amount, value, { align: 'center', bold }),
+      height,
+    )
 
   const itemsTable = tbl(ITEM_COLS, [
     tr(
@@ -247,51 +430,58 @@ function buildBody(sectPr: string): string {
         tc(desc, 'Product Name and Description', { bold: true, align: 'center' }) +
         tc(rate, 'Rate (Rupees)', { bold: true, align: 'center' }) +
         tc(qty, 'Qty.', { bold: true, align: 'center' }) +
-        tc(amount, 'Amount\n(Rupees)', { bold: true, align: 'center' }),
+        // Two paragraphs, not one wrapped line — that is why the header row is
+        // as tall as it is.
+        cell(
+          amount,
+          cp('Amount', { bold: true, align: 'center' }) +
+            cp('(Rupees)', { bold: true, align: 'center' }),
+        ),
+      ROW_HEIGHT.itemHeader,
     ),
-    // docxtemplater expands the whole row: the opening and closing tags are in
-    // the same one.
+    /**
+     * One row per item; docxtemplater expands the whole row, so the opening and
+     * closing loop tags both live in it.
+     *
+     * Every cell opens with a blank paragraph, and the description carries a
+     * second one between the name and the specification. That is the original's
+     * spacing reproduced exactly, and it is why the serial number, rate,
+     * quantity and amount line up with the product name instead of sitting a
+     * line above it.
+     *
+     * The description arrives pre-split. It has to: the product name is bold and
+     * underlined and the specification under it is not, and docxtemplater
+     * substitutes text, not formatting — so a single {desc} tag could only ever
+     * render the whole thing in one weight.
+     */
     tr(
-      tc(sr, '{#items}{sr}', { align: 'center' }) +
-        tc(desc, '{desc}') +
-        tc(rate, '{rate}', { align: 'right' }) +
-        tc(qty, '{qty}', { align: 'center' }) +
-        tc(amount, '{amount}{/items}', { align: 'right' }),
+      // "restart" on every item row, so no two item rows merge into each other
+      // — each opens its own run, and the three totals rows below continue the
+      // last one.
+      cell(sr, cp() + cp('{#items}{sr}'), { vMerge: 'restart' }) +
+        cell(
+          desc,
+          cp() + cp('{descName}', { bold: true, underline: true }) + cp() + cp('{descSpec}'),
+        ) +
+        cell(rate, cp() + cp('{rate}', { align: 'center' })) +
+        cell(qty, cp() + cp('{qty}', { align: 'center' })) +
+        cell(amount, cp() + cp('{amount}{/items}', { align: 'center' })),
       ROW_HEIGHT.item,
     ),
-    tr(
-      tc(sr, '') +
-        tc(desc, 'Sub Total', { align: 'center' }) +
-        tc(rate, '') +
-        tc(qty, '') +
-        tc(amount, '{subTotal}', { align: 'right' }),
-      ROW_HEIGHT.subTotal,
-    ),
-    tr(
-      tc(sr, '') +
-        tc(desc, '{#taxRows}{taxLabel}', { align: 'center' }) +
-        tc(rate, '') +
-        tc(qty, '') +
-        tc(amount, '{taxAmount}{/taxRows}', { align: 'right' }),
-      ROW_HEIGHT.tax,
-    ),
-    tr(
-      tc(sr, '') +
-        tc(desc, 'Total Amount', { align: 'center', bold: true }) +
-        tc(rate, '') +
-        tc(qty, '') +
-        tc(amount, '{grandTotal}', { align: 'right', bold: true }),
-      ROW_HEIGHT.total,
-    ),
+    totalRow('Sub Total', '{subTotal}', ROW_HEIGHT.subTotal),
+    // The tax row goes through totalRow like the other two. Built by hand it
+    // kept a plain bordered cell in the serial column, which broke the vertical
+    // merge running down from the last line item and put a stray rule across it.
+    totalRow('{#taxRows}{taxLabel}', '{taxAmount}{/taxRows}', ROW_HEIGHT.tax),
+    totalRow('Total Amount', '{grandTotal}', ROW_HEIGHT.total, true),
   ])
 
   /**
-   * Paragraph for paragraph as the letterhead has it, blank lines included.
-   * The tabs are the document's own; it relies on Word's default tab stops, so
-   * no custom ones are set here either.
+   * Paragraph for paragraph as the definitive quotation has it, blank lines
+   * included. The tabs are the document's own; it relies on Word's default tab
+   * stops, so no custom ones are set here either.
    *
-   * Nothing has been added. An "Amount in words" line used to sit under the
-   * table; it is not on the letterhead, so it is gone.
+   * Nothing has been added, and the one departure is noted where it happens.
    */
   const parts = [
     addressBlock,
@@ -299,38 +489,50 @@ function buildBody(sectPr: string): string {
     p('Dear Sir,'),
     p('Please find the following Quotation for your kind consideration: -'),
     p(),
-    // Heading5 => centred, bold, underlined. The letterhead overrides its
-    // 11pt back to 12pt on the run, and so does this.
+    // Heading5 => centred, bold, underlined. Those come from the style, not
+    // from the paragraph.
     p('Quotation ', { style: 'Heading5' }),
     p(),
     itemsTable,
     p(),
-    p('Terms and Condition:', { bold: true }),
-    p('1.    Payment Terms\t: {payment}'),
-    p('2.    Delivery\t\t: {delivery}'),
-    p('3.    Prices\t\t: {pricesTerm}'),
-    p('4.    Validity\t\t: {validity}'),
-    p(),
-    p(),
-    p('If you have any queries, please feel free to call us at 40668812/88'),
-    p('Looking forward to an encouraging and early response.'),
-    p('\t'),
-    p('\tThanking You,'),
-    p('\t\t'),
-    p('Yours Truly,', { bold: true }),
-    p('For Newtech Computer Services Pvt., Ltd.', { bold: true }),
+    p('Terms and Conditions:', { ...TERMS, bold: true }),
+    p('1.    Payment Terms\t: {payment}', TERMS_NUMBERED),
+    p('2.    Delivery\t: {delivery}', TERMS_NUMBERED),
+    p('3.    Prices\t: {pricesTerm}', TERMS_NUMBERED),
     /**
-     * The letterhead has two blank paragraphs here, for a wet signature. They
-     * are dropped, and it is the one place this departs from it.
+     * The original pads this one line with spaces instead of tabbing it, and at
+     * its exact indent that happens to land the colon in the same column. Here
+     * it tabs like the other three, which reaches the identical column without
+     * depending on the coincidence.
      *
-     * The template is empty, so its whitespace costs nothing. Fill in five line
-     * items and those two blanks push "Rakhi Gupte" onto a second page on its
-     * own — worse than the letterhead, not truer to it. The quotation the desk
-     * actually sent has the name hard against the company line, and that is the
-     * better authority for a document with contents in it.
+     * The original also says "Warranty" where this says "Validity" — the one
+     * place the wording departs from the source document, on the desk's
+     * explicit instruction, because Validity is what tells the customer how
+     * long the price holds. Changing it back is this line and the matching
+     * field name, nothing else.
      */
-    p('{signatory}   ', { bold: true }),
-    p(),
+    p('4.    Validity\t: {validity}', TERMS_NUMBERED),
+    p('', TERMS),
+    p(
+      `If you have any queries, please feel free to call us at ${COMPANY.queriesNumbers}`,
+      TERMS,
+    ),
+    p('Looking forward to an encouraging and early response.', TERMS),
+    // The closing, blank line for blank line as the original has it. "Thanking
+    // you," carries no tab — it sits flush with the terms above it — and the
+    // lone tabbed blank two lines down is the original's, not a stray.
+    p('', TERMS),
+    p('Thanking you,', TERMS),
+    p('', TERMS),
+    p('\t', TERMS),
+    p('Yours Truly,', { ...TERMS, bold: true }),
+    p(COMPANY.closingFor, { ...TERMS, bold: true }),
+    // Three blank paragraphs, the space left for a wet signature.
+    p('', TERMS),
+    p('', TERMS),
+    p('', TERMS),
+    p('{signatory}', { ...TERMS, bold: true }),
+    p('', TERMS),
   ]
 
   return `<w:body>${parts.join('')}${sectPr}</w:body>`
@@ -374,6 +576,7 @@ function main(): void {
 
   console.log(`Wrote ${path.relative(ROOT, TARGET)}`)
   console.log(`  body indent ${BODY_INDENT_LEFT} twips, width ${BODY_WIDTH} twips`)
+  console.log(`  header columns ${HEADER_COLS.join(' + ')} = ${HEADER_COLS.reduce((a, b) => a + b, 0)}`)
   console.log(`  item columns ${ITEM_COLS.join(' + ')} = ${ITEM_COLS.reduce((a, b) => a + b, 0)}`)
   console.log('  header, footer, styles and media copied through untouched')
 }

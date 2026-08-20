@@ -117,7 +117,33 @@ describe('buildRenderModel — §8, every value a string', () => {
   })
 
   it('uses the house date format', () => {
-    expect(model.dateLong).toBe('10th July 2026.')
+    expect(`${model.dateDay}${model.dateOrd}${model.dateRest}`).toBe('10th July 2026.')
+  })
+
+  it('splits a description into a product name and a specification', () => {
+    // The name is printed bold and underlined and the spec plain beneath it, so
+    // they reach the template as two fields. One {desc} tag could only ever
+    // render both in the same weight.
+    const [first] = buildRenderModel({
+      ...QUOTE,
+      items: [
+        {
+          desc: 'HP 280 G9 MT ( MII )\nCore i5-14500, 8GB DDR5\n3 Years Warranty',
+          make: 'HP',
+          partCode: '',
+          qty: 1,
+          rate: 100,
+        },
+      ],
+    }).items
+
+    expect(first!.descName).toBe('HP 280 G9 MT ( MII )')
+    expect(first!.descSpec).toBe('Core i5-14500, 8GB DDR5\n3 Years Warranty')
+  })
+
+  it('leaves the specification empty for a one-line description', () => {
+    expect(model.items[0]!.descName).toBe('Black i USB-C to USB-A 1.5 mtr')
+    expect(model.items[0]!.descSpec).toBe('')
   })
 
   it('marks a revision in the reference', () => {
@@ -182,11 +208,32 @@ describe('renderDocx — the golden file', () => {
     // reproduce this document rather than improve it.
     expect(text).not.toContain('Make')
     expect(text).not.toContain('Amount in words')
-    expect(text).toContain('Terms and Condition:')
+    expect(text).toContain('Terms and Conditions:')
     expect(text).toContain('please feel free to call us at 40668812/88')
     // The fourth term is Validity — the date the price holds until.
     expect(text).toContain('Validity')
     expect(text).toContain('31st July 2026.')
+  })
+
+  it('raises the ordinal in the date', () => {
+    // "23rd June 2026." is printed "23^rd June 2026." Word can only superscript
+    // a whole run and a docxtemplater tag IS one run, so the date arrives
+    // pre-split — and this is the assertion that catches it being rejoined.
+    const xml = new PizZip(rendered).file('word/document.xml')!.asText()
+    const raised = /<w:vertAlign w:val="superscript"\/>[\s\S]{0,120}?<w:t[^>]*>th<\/w:t>/
+    expect(xml).toMatch(raised)
+    expect(text).toContain('10th July 2026.')
+  })
+
+  it('runs the serial-number column unbroken past the totals', () => {
+    // The last line item's serial cell merges downward over Sub Total, the tax
+    // rows and Total, so no rule is drawn across it. A totals row built by hand
+    // rather than through the shared helper once broke that chain, and the only
+    // symptom was a stray line in one corner of the table.
+    const xml = new PizZip(rendered).file('word/document.xml')!.asText()
+    expect((xml.match(/<w:vMerge w:val="restart"\/>/g) ?? []).length).toBe(QUOTE.items.length)
+    // Sub Total, one tax row, Total.
+    expect((xml.match(/<w:vMerge\/>/g) ?? []).length).toBe(3)
   })
 
   it('expands the tax loop to two rows for an in-state customer', () => {
