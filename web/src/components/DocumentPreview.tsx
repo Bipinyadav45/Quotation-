@@ -99,7 +99,8 @@ export default function DocumentPreview({ data, pendingRef }: Props) {
 
       <p>Dear Sir,</p>
       <p>Please find the following Quotation for your kind consideration: -</p>
-      <p className="my-2 text-center font-bold">Quotation</p>
+      {/* Heading5 in the letterhead: centred, bold, underlined. */}
+      <p className="my-2 text-center font-bold underline">Quotation</p>
 
       <table className="w-full border border-ink/30 text-[11.5px]">
         <thead>

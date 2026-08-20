@@ -119,6 +119,14 @@ function runs(text: string, opts: RunOpts = {}): string {
 
 interface ParaOpts extends RunOpts {
   align?: 'left' | 'center' | 'right'
+  /**
+   * A named style from the letterhead's own styles.xml, which we copy
+   * byte-identical. "Quotation" is a Heading5 there, and Heading5 carries the
+   * centring, the bold and the underline — none of which appear on the
+   * paragraph itself. Reading only direct formatting rendered that heading as
+   * plain left-aligned text, which is exactly what it looked like.
+   */
+  style?: string
   /** Suppress the standard body indent — used inside table cells. */
   bare?: boolean
   spaceAfter?: number
@@ -126,6 +134,7 @@ interface ParaOpts extends RunOpts {
 }
 
 function p(text = '', opts: ParaOpts = {}): string {
+  const style = opts.style ? `<w:pStyle w:val="${opts.style}"/>` : ''
   const ind = opts.bare
     ? ''
     : `<w:ind w:left="${BODY_INDENT_LEFT}" w:right="${BODY_INDENT_RIGHT}"/>`
@@ -134,7 +143,7 @@ function p(text = '', opts: ParaOpts = {}): string {
   const tabs = opts.tabs?.length
     ? `<w:tabs>${opts.tabs.map((pos) => `<w:tab w:val="left" w:pos="${pos}"/>`).join('')}</w:tabs>`
     : ''
-  return `<w:p><w:pPr>${spacing}${ind}${tabs}${jc}</w:pPr>${runs(text, opts)}</w:p>`
+  return `<w:p><w:pPr>${style}${spacing}${ind}${tabs}${jc}</w:pPr>${runs(text, opts)}</w:p>`
 }
 
 const BORDERS =
@@ -257,7 +266,9 @@ function buildBody(sectPr: string): string {
     p('Dear Sir,'),
     p('Please find the following Quotation for your kind consideration: -'),
     p(),
-    p('Quotation'),
+    // Heading5 => centred, bold, underlined. The letterhead overrides its
+    // 11pt back to 12pt on the run, and so does this.
+    p('Quotation ', { style: 'Heading5' }),
     p(),
     itemsTable,
     p(),
