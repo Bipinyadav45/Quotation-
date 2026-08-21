@@ -534,36 +534,23 @@ function buildBody(sectPr: string): string {
      */
     p('4.    Validity\t: {validity}', TERMS_NUMBERED),
     /**
-     * Term 5 is the only one that is not always there. Most quotations state no
-     * warranty, and on those the line must not appear at all: "5.    Warranty
-     * :" with nothing after it reads as a promise nobody made, on the copy the
-     * customer keeps.
+     * Term 5 prints on every document, like the four above it.
      *
-     * Hence a section rather than a plain {warranty} tag — substituting ""
-     * empties the runs and leaves the paragraph standing, which is a blank line
-     * exactly where the term would be on most of the quotations we send.
+     * It was conditional at first — wrapped in a {#warranty} section so a
+     * quotation stating no warranty printed four terms and no fifth line, on
+     * the reasoning that "5.    Warranty :" with nothing after it reads as a
+     * promise nobody made. The desk asked for the opposite: the line is part of
+     * the document's shape and a customer looking for it should always find it.
+     * So it is unconditional, and DEFAULT_TERMS carries a warranty for the same
+     * reason it carries a payment term — the blank is filled before it is
+     * printed, not hidden after.
      *
-     * THE THREE PARAGRAPHS ARE THE POINT, and the reason this is not one line.
-     * `paragraphLoop` only lifts a section up to whole paragraphs when its two
-     * tags stand alone in paragraphs of their own; written inline as
-     * `{#warranty}5.    Warranty\t: {warranty}{/warranty}` the section is
-     * resolved WITHIN the paragraph, so a blank warranty empties the runs and
-     * leaves that same stray line behind. Verified both ways in docx.test.ts,
-     * because the difference is invisible from reading the tags.
-     *
-     * The value tag names the field again rather than using {.}: docxtemplater
-     * treats a truthy STRING as a condition and not as a scope, so inside the
-     * section the scope is still the whole model and {.} renders
-     * "[object Object]" onto the quotation.
-     *
-     * The tab lives here rather than in the value because runs() turns a \t into
-     * a real <w:tab/> element at build time; one arriving through a substituted
-     * value would print as a literal character and miss the column the other
-     * four colons land in.
+     * The tab lives here rather than in the value because runs() turns a "\t"
+     * into a real <w:tab/> element at build time; one arriving through a
+     * substituted value would print as a literal character and miss the column
+     * the other four colons land in.
      */
-    p('{#warranty}', TERMS),
     p('5.    Warranty\t: {warranty}', TERMS_NUMBERED),
-    p('{/warranty}', TERMS),
     p('', TERMS),
     p(
       `If you have any queries, please feel free to call us at ${COMPANY.queriesNumbers}`,

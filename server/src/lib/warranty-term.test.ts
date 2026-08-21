@@ -1,6 +1,7 @@
 import PizZip from 'pizzip'
 import { describe, expect, it } from 'vitest'
 import type { Quote } from '@shared/schema.js'
+import { DEFAULT_TERMS } from '@shared/company.js'
 import { hoistWarranty } from '../../../web/src/lib/draft.js'
 import { renderDocx } from './docx.js'
 
@@ -101,13 +102,35 @@ describe('a warranty lifted out of a line and printed as term 5', () => {
     expect(text).not.toMatch(/,\s*,/)
   })
 
-  it('prints no fifth term when the line never mentioned one', () => {
+  it('still prints the fifth term when the line never mentioned one', () => {
+    // The hoist has nothing to give — that is what null means — but the line is
+    // part of the document's shape and prints regardless. What fills it is the
+    // caller's business: App.tsx falls back to DEFAULT_TERMS.warranty, and this
+    // helper deliberately does not, so the empty case stays visible here.
     const { hoisted, text } = through('Black i USB-C to USB-A 1.5 mtr')
 
     expect(hoisted.warranty).toBeNull()
-    expect(text).not.toContain('Warranty')
     expect(text).toContain('4. Validity')
-    expect(text).not.toContain('5.')
+    expect(text).toContain('5. Warranty')
+    // The label, and nothing masquerading as a value behind it.
+    expect(text).not.toMatch(/5\. Warranty : \S/)
+  })
+
+  it('fills that gap from the default the desk actually ships with', () => {
+    // The pairing App.tsx makes: nothing from the lines, so the standing term
+    // is what the customer reads — never a blank promise and never an invented
+    // length.
+    const hoisted = hoistWarranty([
+      { desc: 'Black i USB-C to USB-A 1.5 mtr', make: '', partCode: '', qty: 1, rate: 55_000 },
+    ])
+    const rendered = renderDocx({
+      ...QUOTE,
+      items: hoisted.items,
+      terms: { ...QUOTE.terms, warranty: hoisted.warranty ?? DEFAULT_TERMS.warranty },
+      totals: { sub: 55_000, tax: 9_900, total: 64_900 },
+    })
+
+    expect(textOf(rendered)).toContain(`5. Warranty : ${DEFAULT_TERMS.warranty}`)
   })
 
   it('leaves both descriptions alone when the lines disagree', () => {

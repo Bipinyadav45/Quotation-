@@ -76,6 +76,16 @@ export const DEFAULT_TERMS = {
    * distinction is the reason this is not derived from the thread.
    */
   prices: 'All-inclusive as per this proforma invoice',
+  /**
+   * Term 5 prints on every document, so it needs something to say. This one
+   * defers to the manufacturer rather than naming a length: the desk sells
+   * many products with many warranties, and a default promising "1 Year" on a
+   * machine carrying three would be wrong on the copy the customer keeps.
+   *
+   * It is overwritten whenever the thread states a warranty of its own, and it
+   * is editable on every quotation.
+   */
+  warranty: 'As per OEM standard warranty',
 } as const
 
 export const GST_RATE_PERCENT = 18

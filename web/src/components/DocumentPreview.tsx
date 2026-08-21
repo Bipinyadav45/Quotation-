@@ -18,10 +18,10 @@ export interface DocumentData {
   items: Array<{ desc: string; qty: number; rate: number }>
   tax: { mode: 'IGST' | 'CGST+SGST'; rate: number }
   /**
-   * `warranty` is the fifth term and, unlike the four beside it, is routinely
-   * blank — blank meaning the quotation prints four terms and no fifth line.
-   * Required rather than optional so the editor cannot quietly stop passing it
-   * and leave the preview showing a document the download does not match.
+   * `warranty` is the fifth term, printed on every document like the four
+   * beside it. Required rather than optional so the editor cannot quietly stop
+   * passing it and leave the preview showing a document the download does not
+   * match.
    */
   terms: {
     payment: string
@@ -112,21 +112,17 @@ export default function DocumentPreview({ data, pendingRef }: Props) {
   // which is how the address lines above already treat their blanks.
   const customerGstin = gstinLine(data.customer.gstin)
   const companyGstin = gstinLine(COMPANY.gstin)
-  // Term 5 only exists on the quotations that state a warranty. The template
-  // wraps its whole paragraph in a {#warranty} section and drops the line when
-  // the value is blank, so a row shown here for a blank warranty would be a
-  // line the customer's copy has not got. Trimmed on both sides for the same
-  // reason buildRenderModel trims: "   " is truthy and would print the label
-  // with nothing after it.
+  // All five, always — the document prints term 5 whatever it holds, so a row
+  // hidden here would be a line the customer's copy has and this one has not.
+  // Trimmed for the same reason buildRenderModel trims: "   " would otherwise
+  // print as a value.
   const numberedTerms: Array<[string, string, string]> = [
     ['1.', 'Payment Terms', data.terms.payment],
     ['2.', 'Delivery', data.terms.delivery],
     ['3.', 'Prices', data.terms.prices],
     ['4.', 'Validity', data.terms.validity],
+    ['5.', 'Warranty', data.terms.warranty.trim()],
   ]
-  if (data.terms.warranty.trim()) {
-    numberedTerms.push(['5.', 'Warranty', data.terms.warranty.trim()])
-  }
 
   return (
     <div className="panel bg-paper-raised p-6 font-serif text-[12px] leading-relaxed">

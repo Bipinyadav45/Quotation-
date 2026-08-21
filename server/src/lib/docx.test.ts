@@ -469,31 +469,28 @@ describe('renderDocx — the fifth term', () => {
     ])
   })
 
-  it('prints no fifth term at all when no line stated a warranty', () => {
-    // The regression that matters, and the one every already-saved quotation
-    // depends on: a "5.    Warranty :" with nothing after it is a promise
-    // nobody made, printed on the copy the customer keeps.
+  it('prints the fifth term even when it holds nothing', () => {
+    // The desk asked for term 5 on every document, so an empty one shows the
+    // label with nothing after it rather than disappearing. That is why
+    // DEFAULT_TERMS carries a warranty — the blank is filled before it prints,
+    // not hidden after. This fixture deliberately has none, to pin the shape.
     expect(QUOTE.terms.warranty).toBe('')
-    const text = extractText(renderDocx(QUOTE))
-    expect(text).not.toContain('Warranty')
-    expect(numberedTerms(renderDocx(QUOTE))).toHaveLength(4)
-    expect(text).not.toMatch(/(^|\n)\s*5\.\s/)
+    const numbered = numberedTerms(renderDocx(QUOTE))
+    expect(numbered).toHaveLength(5)
+    expect(numbered[4]).toMatch(/^5\. Warranty :/)
   })
 
-  it('leaves no blank line behind where the fifth term would have been', () => {
-    // The trap the three-paragraph section exists to avoid, and the only test
-    // that can see it. Written inline — {#warranty}5. Warranty\t: {warranty}
-    // {/warranty} all in one paragraph — docxtemplater resolves the section
-    // WITHIN the paragraph: the runs empty and the paragraph stays, so every
-    // warranty-less quotation gains a stray line under term 4. Stripped of its
-    // tags that paragraph is the empty string, indistinguishable from the
-    // paragraph not being there, so only the count shows it.
+  it('is the same block of paragraphs whether or not it holds a value', () => {
+    // The terms block must not change SHAPE with its contents: a value that
+    // adds or removes a paragraph moves everything below it — the closing, the
+    // signature — and on a full quotation that is the difference between one
+    // page and two. Only the count and the paragraph properties can see this;
+    // stripped of its tags an empty paragraph and an absent one are the same
+    // empty string.
     const none = termsBlock(renderDocx(QUOTE))
     const some = termsBlock(withWarranty('1 Year'))
-    expect(some).toHaveLength(none.length + 1)
-    expect(none.map((p) => p.text)).toEqual(
-      some.map((p) => p.text).filter((t) => t !== '5. Warranty : 1 Year'),
-    )
+    expect(some).toHaveLength(none.length)
+    expect(none.map((p) => p.props)).toEqual(some.map((p) => p.props))
   })
 
   it('lands the fifth colon in the same column as the other four', () => {
@@ -507,21 +504,23 @@ describe('renderDocx — the fifth term', () => {
     expect(numbered[4]!.props).toContain('<w:tab w:val="left" w:pos="3413"/>')
   })
 
-  it('treats a whitespace-only warranty as no warranty', () => {
-    // The section only asks whether there is a value, and "   " is truthy — so
-    // without the trim in buildRenderModel a stray space in the editor prints
-    // the label with nothing after it.
+  it('prints no value for a warranty that is only whitespace', () => {
+    // Without the trim in buildRenderModel a stray space typed in the editor
+    // reaches the document as a value, so the label is followed by a blank that
+    // looks deliberate rather than by nothing.
     expect(buildRenderModel({ ...QUOTE, terms: { ...QUOTE.terms, warranty: '  ' } }).warranty).toBe(
       '',
     )
-    expect(numberedTerms(withWarranty('   '))).toHaveLength(4)
+    expect(numberedTerms(withWarranty('   '))).toEqual(numberedTerms(renderDocx(QUOTE)))
   })
 
   it('resolves the value rather than printing the model into the document', () => {
-    // {.} is the documented way to print a section's own value and it does not
-    // work for this one: docxtemplater treats a truthy STRING as a condition,
-    // not as a scope, so inside the section the scope is still the whole render
-    // model and {.} renders "[object Object]" onto the quotation.
+    // Kept from when term 5 was wrapped in a {#warranty} section, where {.} —
+    // the documented way to print a section's own value — rendered
+    // "[object Object]" onto the quotation, because docxtemplater treats a
+    // truthy STRING as a condition and not as a scope. The section is gone, but
+    // an assertion that the customer's copy never carries a JavaScript object
+    // costs nothing to keep.
     const text = extractText(withWarranty('1 Year Onsite'))
     expect(text).toContain('5. Warranty : 1 Year Onsite')
     expect(text).not.toContain('[object Object]')

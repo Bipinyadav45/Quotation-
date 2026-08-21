@@ -652,7 +652,7 @@ export default function QuoteEditor({
               is a real answer here, and the desk can still promise a warranty
               the lines never mentioned. */}
           <p className="mt-2 text-[11px] text-ink-faint no-print">
-            blank prints no term 5 — type one here if this quotation promises a warranty
+            term 5 prints on every document — leave it blank only to print the label with nothing after it
           </p>
         </div>
 

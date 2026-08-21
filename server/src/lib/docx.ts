@@ -66,9 +66,10 @@ export interface RenderModel {
   /** The fourth term is Validity — the date the price holds until. */
   validity: string
   /**
-   * The fifth term, and the only one that is routinely empty. The template
-   * wraps its whole paragraph in {#warranty}…{/warranty}, so "" prints no line
-   * rather than a blank one — see the terms block in build-template.ts.
+   * The fifth term. Prints on every document like the four above it, so an
+   * empty value shows the label with nothing after it — which is why
+   * DEFAULT_TERMS carries one. Still trimmed, so stray spaces do not print as
+   * a value.
    */
   warranty: string
   signatory: string

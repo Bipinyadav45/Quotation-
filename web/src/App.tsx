@@ -76,7 +76,7 @@ function newDraft(
       // nobody stated a warranty or two lines stated different ones, and both
       // of those are the desk's to answer — an empty box to type in, never a
       // promise we wrote on their behalf.
-      warranty: warranty ?? '',
+      warranty: warranty ?? DEFAULT_TERMS.warranty,
     },
   }
 }
