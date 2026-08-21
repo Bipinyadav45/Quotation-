@@ -17,7 +17,19 @@ export interface DocumentData {
   signatory: string
   items: Array<{ desc: string; qty: number; rate: number }>
   tax: { mode: 'IGST' | 'CGST+SGST'; rate: number }
-  terms: { payment: string; delivery: string; prices: string; validity: string }
+  /**
+   * `warranty` is the fifth term and, unlike the four beside it, is routinely
+   * blank — blank meaning the quotation prints four terms and no fifth line.
+   * Required rather than optional so the editor cannot quietly stop passing it
+   * and leave the preview showing a document the download does not match.
+   */
+  terms: {
+    payment: string
+    delivery: string
+    prices: string
+    validity: string
+    warranty: string
+  }
 }
 
 interface Props {
@@ -100,6 +112,21 @@ export default function DocumentPreview({ data, pendingRef }: Props) {
   // which is how the address lines above already treat their blanks.
   const customerGstin = gstinLine(data.customer.gstin)
   const companyGstin = gstinLine(COMPANY.gstin)
+  // Term 5 only exists on the quotations that state a warranty. The template
+  // wraps its whole paragraph in a {#warranty} section and drops the line when
+  // the value is blank, so a row shown here for a blank warranty would be a
+  // line the customer's copy has not got. Trimmed on both sides for the same
+  // reason buildRenderModel trims: "   " is truthy and would print the label
+  // with nothing after it.
+  const numberedTerms: Array<[string, string, string]> = [
+    ['1.', 'Payment Terms', data.terms.payment],
+    ['2.', 'Delivery', data.terms.delivery],
+    ['3.', 'Prices', data.terms.prices],
+    ['4.', 'Validity', data.terms.validity],
+  ]
+  if (data.terms.warranty.trim()) {
+    numberedTerms.push(['5.', 'Warranty', data.terms.warranty.trim()])
+  }
 
   return (
     <div className="panel bg-paper-raised p-6 font-serif text-[12px] leading-relaxed">
@@ -280,17 +307,10 @@ export default function DocumentPreview({ data, pendingRef }: Props) {
           above it. */}
       <div className="mt-3" style={{ paddingLeft: TERMS_STEP }}>
         <p className="font-bold">Terms and Conditions:</p>
-        {/* A two-column grid rather than counted spaces, so all four colons
-            land in one column exactly as the template's tab stop puts them. */}
+        {/* A two-column grid rather than counted spaces, so every colon lands
+            in one column exactly as the template's tab stop puts them. */}
         <div className="grid" style={{ gridTemplateColumns: `${TERMS_COLON} 1fr` }}>
-          {(
-            [
-              ['1.', 'Payment Terms', data.terms.payment],
-              ['2.', 'Delivery', data.terms.delivery],
-              ['3.', 'Prices', data.terms.prices],
-              ['4.', 'Validity', data.terms.validity],
-            ] as const
-          ).map(([n, label, value]) => (
+          {numberedTerms.map(([n, label, value]) => (
             <Fragment key={n}>
               <span>
                 {n}&nbsp;&nbsp;&nbsp;&nbsp;{label}

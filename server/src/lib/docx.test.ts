@@ -35,6 +35,50 @@ function extractText(buffer: Buffer): string {
     .replace(/[ \t]+/g, ' ')
 }
 
+/**
+ * The terms block, paragraph by paragraph, as its text and as the properties
+ * that place it on the page.
+ *
+ * Term 5 is printed only when there is a warranty, and "printed nothing" and
+ * "printed a blank line" are the same string once the tags are stripped — so
+ * its absence can only be checked by counting paragraphs. The properties come
+ * back too because that is where the tab stop lives, and the tab stop is what
+ * puts the fifth colon in the same column as the other four.
+ */
+function termsBlock(buffer: Buffer): Array<{ text: string; props: string }> {
+  const xml = new PizZip(buffer).file('word/document.xml')!.asText()
+  const from = xml.indexOf('Terms and Conditions:')
+  const to = xml.indexOf('If you have any queries')
+  expect(from, 'the terms block has moved').toBeGreaterThan(-1)
+  expect(to, 'the closing has moved').toBeGreaterThan(from)
+
+  return (
+    xml
+      .slice(from, to)
+      .split('<w:p>')
+      // The first and last pieces are the tails of the two paragraphs the slice
+      // cuts through — the heading above the terms and the queries line below.
+      .slice(1, -1)
+      .map((para) => ({
+        text: stripPara(para),
+        props: /<w:pPr>[\s\S]*?<\/w:pPr>/.exec(para)?.[0] ?? '',
+      }))
+  )
+}
+
+const stripPara = (para: string) =>
+  para
+    .replace(/<w:tab\/>/g, ' ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/[ \t]+/g, ' ')
+    .trim()
+
+/** The numbered terms alone — "1. Payment Terms : 100% Advance" and friends. */
+const numberedTerms = (buffer: Buffer) =>
+  termsBlock(buffer)
+    .map((p) => p.text)
+    .filter((t) => /^\d+\.\s/.test(t))
+
 const QUOTE: Quote = {
   id: 'test',
   ref: 'NCS/2026-27/Quotes/RG/030',
@@ -74,6 +118,9 @@ const QUOTE: Quote = {
     delivery: '1-2 Weeks after PO',
     prices: 'All-inclusive as per the quote',
     validity: '31st July 2026.',
+    // The ordinary case: no line stated a warranty, so the document has four
+    // terms. Every quotation saved before term 5 existed reads exactly this.
+    warranty: '',
   },
   totals: { sub: 1_150_000, tax: 207_000, total: 1_357_000 },
   sourceThread: '',
@@ -396,6 +443,88 @@ describe('against the quotation Newtech actually sent', () => {
     expect(ours).not.toMatch(/\bQuotation\b/)
     // ...and the reference series is untouched, because it is an identifier.
     expect(ours).toContain('NCS/2026-27/Quotes/RG/030')
+  })
+})
+
+/**
+ * Term 5 — the warranty, hoisted out of the line descriptions and printed once.
+ *
+ * It is the only term that is sometimes not there. Most quotations state no
+ * warranty and must read exactly as they did before this term existed: four
+ * numbered lines and nothing under them. That is what the template's
+ * {#warranty} section is for, and it is a section spanning three paragraphs
+ * rather than one inline pair for a reason these tests hold in place.
+ */
+describe('renderDocx — the fifth term', () => {
+  const withWarranty = (warranty: string) =>
+    renderDocx({ ...QUOTE, terms: { ...QUOTE.terms, warranty } })
+
+  it('prints the warranty as term 5, under the other four', () => {
+    expect(numberedTerms(withWarranty('3 Years Warranty'))).toEqual([
+      '1. Payment Terms : 100% Advance',
+      '2. Delivery : 1-2 Weeks after PO',
+      '3. Prices : All-inclusive as per the quote',
+      '4. Validity : 31st July 2026.',
+      '5. Warranty : 3 Years Warranty',
+    ])
+  })
+
+  it('prints no fifth term at all when no line stated a warranty', () => {
+    // The regression that matters, and the one every already-saved quotation
+    // depends on: a "5.    Warranty :" with nothing after it is a promise
+    // nobody made, printed on the copy the customer keeps.
+    expect(QUOTE.terms.warranty).toBe('')
+    const text = extractText(renderDocx(QUOTE))
+    expect(text).not.toContain('Warranty')
+    expect(numberedTerms(renderDocx(QUOTE))).toHaveLength(4)
+    expect(text).not.toMatch(/(^|\n)\s*5\.\s/)
+  })
+
+  it('leaves no blank line behind where the fifth term would have been', () => {
+    // The trap the three-paragraph section exists to avoid, and the only test
+    // that can see it. Written inline — {#warranty}5. Warranty\t: {warranty}
+    // {/warranty} all in one paragraph — docxtemplater resolves the section
+    // WITHIN the paragraph: the runs empty and the paragraph stays, so every
+    // warranty-less quotation gains a stray line under term 4. Stripped of its
+    // tags that paragraph is the empty string, indistinguishable from the
+    // paragraph not being there, so only the count shows it.
+    const none = termsBlock(renderDocx(QUOTE))
+    const some = termsBlock(withWarranty('1 Year'))
+    expect(some).toHaveLength(none.length + 1)
+    expect(none.map((p) => p.text)).toEqual(
+      some.map((p) => p.text).filter((t) => t !== '5. Warranty : 1 Year'),
+    )
+  })
+
+  it('lands the fifth colon in the same column as the other four', () => {
+    // Every numbered term carries the same indent and the same explicit tab
+    // stop, which is what puts all five colons in one column. Term 5 built by
+    // hand with a different paragraph shape would print half a centimetre out
+    // and nothing else would notice.
+    const numbered = termsBlock(withWarranty('1 Year')).filter((p) => /^\d+\.\s/.test(p.text))
+    expect(numbered).toHaveLength(5)
+    expect(new Set(numbered.map((p) => p.props)).size, 'the five terms disagree on layout').toBe(1)
+    expect(numbered[4]!.props).toContain('<w:tab w:val="left" w:pos="3413"/>')
+  })
+
+  it('treats a whitespace-only warranty as no warranty', () => {
+    // The section only asks whether there is a value, and "   " is truthy — so
+    // without the trim in buildRenderModel a stray space in the editor prints
+    // the label with nothing after it.
+    expect(buildRenderModel({ ...QUOTE, terms: { ...QUOTE.terms, warranty: '  ' } }).warranty).toBe(
+      '',
+    )
+    expect(numberedTerms(withWarranty('   '))).toHaveLength(4)
+  })
+
+  it('resolves the value rather than printing the model into the document', () => {
+    // {.} is the documented way to print a section's own value and it does not
+    // work for this one: docxtemplater treats a truthy STRING as a condition,
+    // not as a scope, so inside the section the scope is still the whole render
+    // model and {.} renders "[object Object]" onto the quotation.
+    const text = extractText(withWarranty('1 Year Onsite'))
+    expect(text).toContain('5. Warranty : 1 Year Onsite')
+    expect(text).not.toContain('[object Object]')
   })
 })
 

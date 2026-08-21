@@ -129,7 +129,7 @@ quoteRoutes.post('/quote', validateBody(SaveQuoteRequestSchema), (req, res) => {
          customer_name, customer_address, customer_attention, customer_gstin, customer_state,
          contact, email, signatory,
          tax_mode, tax_rate,
-         term_payment, term_delivery, term_prices, term_validity,
+         term_payment, term_delivery, term_prices, term_validity, term_warranty,
          sub_paise, tax_paise, total_paise,
          source_thread,
          status, created_at, updated_at
@@ -138,7 +138,7 @@ quoteRoutes.post('/quote', validateBody(SaveQuoteRequestSchema), (req, res) => {
          @customerName, @customerAddress, @customerAttention, @customerGstin, @customerState,
          @contact, @email, @signatory,
          @taxMode, @taxRate,
-         @termPayment, @termDelivery, @termPrices, @termValidity,
+         @termPayment, @termDelivery, @termPrices, @termValidity, @termWarranty,
          @sub, @tax, @total,
          @sourceThread,
          'draft', @now, @now
@@ -162,6 +162,7 @@ quoteRoutes.post('/quote', validateBody(SaveQuoteRequestSchema), (req, res) => {
       termDelivery: input.terms.delivery,
       termPrices: input.terms.prices,
       termValidity: input.terms.validity,
+      termWarranty: input.terms.warranty,
       sub: totals.sub,
       tax: totals.tax,
       total: totals.total,
@@ -364,6 +365,7 @@ export function loadQuote(id: string): Quote | null {
       delivery: row.term_delivery as string,
       prices: row.term_prices as string,
       validity: row.term_validity as string,
+      warranty: row.term_warranty as string,
     },
     totals: {
       sub: row.sub_paise as number,

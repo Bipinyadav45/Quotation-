@@ -3,7 +3,7 @@ import { MATCH_THRESHOLD, similarity, tokenize } from '../../../server/src/lib/s
 
 /**
  * Turning a parsed thread into the makings of a quotation: the lines it quotes,
- * and the one term the thread has an opinion about.
+ * and the terms the thread has an opinion about.
  *
  * Lifted out of App.tsx because these rules decide what a customer is billed
  * for and on what conditions: which lines are quoted at all, what quantity they
@@ -247,7 +247,7 @@ export function itemsFromLines(lines: ParsedLine[]): {
   }
 }
 
-// --- the one term the thread has an opinion about --------------------------
+// --- term 3: whether the rates have GST still to come ----------------------
 
 /**
  * Term 3 when the thread priced its lines with GST still to come. The default
@@ -294,3 +294,230 @@ export function pricesTermFromLines(lines: ParsedLine[]): string | null {
   return saysExtra ? PRICES_GST_EXTRA : null
 }
 
+// --- term 5: the warranty, hoisted out of the line descriptions ------------
+
+/**
+ * The desk writes the warranty inside the line it belongs to — "Warranty: 1
+ * Year" under a refurbished drive, ", 3 Years Warranty" at the end of the DGSL
+ * desktop's specification — and the document now prints it as term 5 instead.
+ *
+ * Inside a description it is one product's promise; as a term it is the whole
+ * quotation's. That is a change to what Newtech has committed to, which is why
+ * it happens here and under test rather than inside a render function.
+ *
+ * HOISTED, never copied: the text leaves the descriptions it came from, or the
+ * same sentence prints twice on one page.
+ *
+ * Only the SPECIFICATION of a description is eligible. The first line is the
+ * product name and is never read — shared/description.ts draws that line, and
+ * the DGSL chain shows what hangs on it: "3 Years NBD and 3 Years ADP - Rs.
+ * 7,000 + gst each additional" is a priced line of its own, a warranty
+ * extension the customer is being BILLED for. Lifted into a term it would lose
+ * its name, and 7,000 would stay on the quotation with nothing beside it.
+ *
+ * That boundary is re-stated here rather than taken from splitDescription
+ * because that function trims what it returns, and a description with no
+ * warranty in it has to come back byte for byte.
+ */
+
+/**
+ * The two shapes the threads write, and only those two: the label first
+ * ("Warranty: 1 Year", "Warranty - 3 Years"), or the length first with the word
+ * at the end (", 3 Years Warranty").
+ *
+ * The second is anchored on the duration deliberately. Matching whatever merely
+ * ENDS in the word would swallow "Win 11 Pro. 3 Years Warranty" entire — the
+ * specification and the warranty in one clause — and delete a specification in
+ * order to move a warranty. A sentence shaped like that stays where it is and
+ * is reported as a line that stated nothing: it costs the desk a warning, and
+ * costs the customer nothing.
+ *
+ * A bare "Warranty" with no length after it states nothing, and is left alone
+ * for the same reason the parser leaves a quantity it cannot read at 0.
+ */
+/**
+ * The label the desk writes in front of the promise — and the same label the
+ * document prints for itself above the value. Spelled once here so the test
+ * for it and the removal of it cannot drift apart.
+ */
+const WARRANTY_LABEL = /^\s*warrant(?:y|ies)\b\s*[:=–—-]?\s*/i
+const WARRANTY_LABELLED = new RegExp(`${WARRANTY_LABEL.source}\\S`, 'i')
+/** The same word written after the length instead of before it: ", 3 Years Warranty". */
+const WARRANTY_WORD_SUFFIX = /[\s,]*[:=–—-]?\s*\bwarrant(?:y|ies)\b[\s.]*$/i
+const WARRANTY_TRAILING = /^\s*\d+\s*(?:years?|yrs?|months?|mos?)\b.*\bwarrant(?:y|ies)\b/i
+
+const isWarrantyStatement = (clause: string): boolean =>
+  WARRANTY_LABELLED.test(clause) || WARRANTY_TRAILING.test(clause)
+
+/**
+ * The promise, less the word the document already prints above it.
+ *
+ * Term 5 renders as "5. Warranty : <value>", so a clause carried across whole
+ * comes out "Warranty : Warranty: 1 Year" — the label once from the thread and
+ * once from the template. What the desk wrote about the LENGTH is still what is
+ * printed; only the label the document supplies for itself comes off.
+ */
+const warrantyValue = (clause: string): string =>
+  clause
+    .trim()
+    .replace(/[.,;:\s]+$/, '')
+    .replace(WARRANTY_LABEL, '')
+    .replace(WARRANTY_WORD_SUFFIX, '')
+    .trim()
+
+/**
+ * One specification line with its warranty clauses taken out.
+ *
+ * Split on commas because that is how these specifications are punctuated, and
+ * NOT on full stops as well: "Win 11 Pro., 3 Years Warranty" would break at the
+ * "Pro." and hand back the specification in pieces. Every clause keeps its own
+ * spacing, so the ones that stay are the bytes that were already there.
+ */
+function stripSpecLine(line: string): { text: string; found: string[] } {
+  const found: string[] = []
+  const kept = line.split(',').filter((clause) => {
+    if (!isWarrantyStatement(clause)) return true
+    // The wording the desk chose, less the punctuation that belonged to the
+    // sentence around it rather than to the promise.
+    const value = warrantyValue(clause)
+    // All label and no length promises nothing. Leave it in the description
+    // rather than open term 5 with nothing to put after the colon.
+    if (value === '') return true
+    found.push(value)
+    return false
+  })
+  if (found.length === 0) return { text: line, found }
+
+  // Joining the survivors takes the removed clause's comma with it, so all that
+  // can be left over is a separator at one end: "…, Win 11 Pro., 3 Years
+  // Warranty." comes back as "…, Win 11 Pro." — no trailing comma, and the full
+  // stop that belongs to "Win 11 Pro." still on it. Nothing else is tidied. The
+  // DGSL specification's own ", ," was in the thread before this ran, and
+  // rewriting a specification is not what hoisting a warranty is allowed to do.
+  return {
+    text: kept
+      .join(',')
+      .replace(/^[\s,]+/, '')
+      .replace(/[\s,]+$/, ''),
+    found,
+  }
+}
+
+/** Every warranty a description states, and the description without them. */
+function stripDescription(desc: string): { desc: string; found: string[] } {
+  const [name = '', ...spec] = desc.split('\n')
+  const found: string[] = []
+  const kept: string[] = []
+
+  for (const line of spec) {
+    const stripped = stripSpecLine(line)
+    found.push(...stripped.found)
+    // A line that was nothing but a warranty statement leaves nothing behind
+    // but the gap it used to fill.
+    if (stripped.found.length > 0 && stripped.text === '') continue
+    kept.push(stripped.text)
+  }
+
+  if (found.length === 0) return { desc, found }
+  const rest = kept.join('\n')
+  // A product name on its own is a complete description — §5 parses plenty of
+  // lines that never carried a specification at all.
+  return { desc: rest.trim() === '' ? name : `${name}\n${rest}`, found }
+}
+
+/**
+ * Two warranties are the same warranty when only their case, spacing,
+ * punctuation and the spelling of the unit differ: "3 Years Warranty" and
+ * "Warranty: 3 yrs" are one promise written twice. The word itself tells the
+ * two apart from nothing — every one of these contains it — so it comes out
+ * before the comparison, and what is left is the length of the promise.
+ *
+ * Normalising is for COMPARING. What gets printed is one of the originals: the
+ * term the customer reads is the desk's own sentence, not this.
+ */
+function normaliseWarranty(warranty: string): string {
+  return warranty
+    .toLowerCase()
+    .replace(/\bwarrant(?:y|ies)\b/g, ' ')
+    .replace(/\b(?:years?|yrs?)\b/g, 'yr')
+    .replace(/\b(?:months?|mos?)\b/g, 'mo')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+export interface HoistedWarranty {
+  /**
+   * What term 5 should say, or null when no line stated one and when the lines
+   * cannot agree on one. Null prints no term at all: a blank "5. Warranty :" on
+   * a customer's document is worse than four terms.
+   */
+  warranty: string | null
+  /** The items, with a hoisted warranty gone from the descriptions it came from. */
+  items: QuoteItem[]
+  /**
+   * A warranty stated on one line and printed over the whole document is a
+   * claim wider than the one that was made, so it never lands silently — the
+   * same rule the carried quantity follows.
+   */
+  warnings: string[]
+}
+
+/**
+ * Term 5, and the items it was taken out of.
+ *
+ * Hoisting is only honest when the document speaks with one voice. Two lines
+ * stating different warranties cannot both be term 5, so nothing moves, every
+ * description keeps the warranty that is true of it, and the desk is told.
+ * Lines that state none are not a disagreement — one term is how the desk
+ * writes these — so the hoist stands and the warning says how many lines
+ * actually said it.
+ */
+export function hoistWarranty(items: QuoteItem[]): HoistedWarranty {
+  const stripped = items.map((item) => stripDescription(item.desc))
+
+  /** Distinct by normalised form, kept in the words and on the line it was first written on. */
+  const distinct = new Map<string, { wording: string; on: string }>()
+  stripped.forEach(({ found }, i) => {
+    for (const warranty of found) {
+      const key = normaliseWarranty(warranty)
+      if (!distinct.has(key)) {
+        distinct.set(key, { wording: warranty, on: headline(items[i]!.desc) })
+      }
+    }
+  })
+
+  if (distinct.size === 0) return { warranty: null, items, warnings: [] }
+
+  if (distinct.size > 1) {
+    const named = [...distinct.values()].map((d) => `"${d.wording}" on "${d.on}"`).join(', ')
+    return {
+      warranty: null,
+      items,
+      warnings: [
+        `The lines state different warranties — ${named} — so no single term can stand for ` +
+          `them all. They have been left in the descriptions, where each of them is true. ` +
+          `Write term 5 by hand if this quotation needs one.`,
+      ],
+    }
+  }
+
+  const { wording } = [...distinct.values()][0]!
+  const silent = stripped.filter(({ found }) => found.length === 0).length
+  const stated = items.length - silent
+
+  return {
+    warranty: wording,
+    items: items.map((item, i) =>
+      stripped[i]!.found.length > 0 ? { ...item, desc: stripped[i]!.desc } : item,
+    ),
+    warnings:
+      silent === 0
+        ? []
+        : [
+            `${stated} of the ${items.length} lines state${stated === 1 ? 's' : ''} a warranty ` +
+              `("${wording}"), and it is now term 5 over all ${items.length}. The other ` +
+              `${silent} line${silent === 1 ? '' : 's'} never made that promise — check term 5 ` +
+              `is meant to cover ${silent === 1 ? 'it' : 'them'} before saving.`,
+          ],
+  }
+}

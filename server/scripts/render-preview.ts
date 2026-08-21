@@ -89,6 +89,7 @@ const QUOTE: Quote = {
     delivery: '5 -6 Days',
     prices: 'All Inclusive as per the quote',
     validity: '31st July 2026.',
+    warranty: '',
   },
   totals: { sub: 292_400_000, tax: 52_632_000, total: 345_032_000 },
   sourceThread: '',
@@ -155,6 +156,10 @@ async function rasterise(pdfPath: string, pngPath: string): Promise<void> {
   context.fillRect(0, 0, canvas.width, canvas.height)
 
   await page.render({
+    // pdfjs v6 wants the canvas as well as its context. It rendered without it
+    // — the runtime only reads what it needs — so this stayed wrong until the
+    // scripts came under the typechecker.
+    canvas: canvas as unknown as HTMLCanvasElement,
     canvasContext: context as unknown as CanvasRenderingContext2D,
     viewport,
   }).promise

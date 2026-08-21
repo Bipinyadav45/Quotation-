@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 import { randomUUID } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -12,8 +12,15 @@ import { ROOT } from '../config.js'
  * real migrations rather than a hand-built fixture — a column renamed in a
  * migration must break this test, not production.
  */
-const SCHEMA = ['001_init.sql', '002_customers.sql']
-  .map((f) => readFileSync(path.resolve(ROOT, 'server', 'db', 'migrations', f), 'utf8'))
+// Every migration there is, in order, rather than a list frozen at the moment
+// this file was written. 003_warranty.sql went in and this kept passing only
+// because it happens not to touch the term columns — the next migration that
+// does would have failed here for a reason nobody could see from the diff.
+const MIGRATIONS = path.resolve(ROOT, 'server', 'db', 'migrations')
+const SCHEMA = readdirSync(MIGRATIONS)
+  .filter((f) => f.endsWith('.sql'))
+  .sort()
+  .map((f) => readFileSync(path.join(MIGRATIONS, f), 'utf8'))
   .join('\n')
 
 let dir: string

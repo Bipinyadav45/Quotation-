@@ -80,6 +80,20 @@ export const TermsSchema = z.object({
   delivery: z.string(),
   prices: z.string(),
   validity: z.string(),
+  /**
+   * Term 5. Unlike the four above it is routinely blank, and blank means the
+   * quotation prints four terms — a "5. Warranty :" with nothing after it is
+   * worse than no line at all.
+   *
+   * Defaulted rather than plain because it arrived after quotations were
+   * already being saved: a client that has not been taught to send it is not
+   * making a malformed request, it is saying no warranty was stated, and ''
+   * says that. Parsed, the value is always a string, so nothing downstream has
+   * to tell a blank warranty from a missing one — and the column it is stored
+   * in says it the same way, for the rows written before it existed
+   * (003_warranty.sql).
+   */
+  warranty: z.string().default(''),
 })
 export type Terms = z.infer<typeof TermsSchema>
 

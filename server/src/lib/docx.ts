@@ -65,6 +65,12 @@ export interface RenderModel {
   pricesTerm: string
   /** The fourth term is Validity — the date the price holds until. */
   validity: string
+  /**
+   * The fifth term, and the only one that is routinely empty. The template
+   * wraps its whole paragraph in {#warranty}…{/warranty}, so "" prints no line
+   * rather than a blank one — see the terms block in build-template.ts.
+   */
+  warranty: string
   signatory: string
 }
 
@@ -104,6 +110,10 @@ export function buildRenderModel(quote: Quote): RenderModel {
     delivery: quote.terms.delivery,
     pricesTerm: quote.terms.prices,
     validity: quote.terms.validity,
+    // Trimmed, because whitespace is truthy and the template's section only
+    // asks whether there is a value: an accidental "  " would open term 5 and
+    // print the label with nothing after it, the one line it exists to avoid.
+    warranty: quote.terms.warranty.trim(),
     signatory: quote.signatory,
   }
 }

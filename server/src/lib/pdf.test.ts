@@ -38,7 +38,7 @@ const QUOTE: Quote = {
     { desc: 'Logitech Wireless Keyboard and Mouse Set #MK540', make: 'Logitech', partCode: 'MK540', qty: 1, rate: 345_000 },
   ],
   tax: { mode: 'IGST', rate: 18 },
-  terms: { payment: '100% Advance', delivery: '1-2 Weeks after PO', prices: 'All-inclusive as per the quote', validity: '31st July 2026.' },
+  terms: { payment: '100% Advance', delivery: '1-2 Weeks after PO', prices: 'All-inclusive as per the quote', validity: '31st July 2026.', warranty: '' },
   totals: { sub: 455_000, tax: 81_900, total: 536_900 },
   sourceThread: '',
   status: 'draft',

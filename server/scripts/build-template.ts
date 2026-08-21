@@ -232,8 +232,15 @@ const BORDERS =
     .join('') +
   '</w:tblBorders>'
 
-interface CellOpts extends RunOpts {
-  align?: 'left' | 'center' | 'right'
+/**
+ * Everything a paragraph takes, plus the two things only a cell has.
+ *
+ * It used to extend RunOpts and so never declared `style`, even though cp()
+ * forwards it to p() and the Ref cell has always relied on Heading4 for its
+ * bold. That went unnoticed because this whole directory sat outside
+ * tsconfig's include list; it is in it now.
+ */
+interface CellOpts extends Omit<ParaOpts, 'bare'> {
   /** Merge horizontally across this many columns. */
   span?: number
   /** `w:shd` fill pattern, e.g. "pct5". */
@@ -526,6 +533,37 @@ function buildBody(sectPr: string): string {
      * field name, nothing else.
      */
     p('4.    Validity\t: {validity}', TERMS_NUMBERED),
+    /**
+     * Term 5 is the only one that is not always there. Most quotations state no
+     * warranty, and on those the line must not appear at all: "5.    Warranty
+     * :" with nothing after it reads as a promise nobody made, on the copy the
+     * customer keeps.
+     *
+     * Hence a section rather than a plain {warranty} tag — substituting ""
+     * empties the runs and leaves the paragraph standing, which is a blank line
+     * exactly where the term would be on most of the quotations we send.
+     *
+     * THE THREE PARAGRAPHS ARE THE POINT, and the reason this is not one line.
+     * `paragraphLoop` only lifts a section up to whole paragraphs when its two
+     * tags stand alone in paragraphs of their own; written inline as
+     * `{#warranty}5.    Warranty\t: {warranty}{/warranty}` the section is
+     * resolved WITHIN the paragraph, so a blank warranty empties the runs and
+     * leaves that same stray line behind. Verified both ways in docx.test.ts,
+     * because the difference is invisible from reading the tags.
+     *
+     * The value tag names the field again rather than using {.}: docxtemplater
+     * treats a truthy STRING as a condition and not as a scope, so inside the
+     * section the scope is still the whole model and {.} renders
+     * "[object Object]" onto the quotation.
+     *
+     * The tab lives here rather than in the value because runs() turns a \t into
+     * a real <w:tab/> element at build time; one arriving through a substituted
+     * value would print as a literal character and miss the column the other
+     * four colons land in.
+     */
+    p('{#warranty}', TERMS),
+    p('5.    Warranty\t: {warranty}', TERMS_NUMBERED),
+    p('{/warranty}', TERMS),
     p('', TERMS),
     p(
       `If you have any queries, please feel free to call us at ${COMPANY.queriesNumbers}`,

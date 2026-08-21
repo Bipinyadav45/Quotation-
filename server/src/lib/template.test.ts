@@ -20,7 +20,9 @@ const QUOTE: Quote = {
   contact: '1', email: 'e', signatory: 's',
   items: [{ desc: 'd', make: 'm', partCode: 'p', qty: 1, rate: 100 }],
   tax: { mode: 'IGST', rate: 18 },
-  terms: { payment: 'p', delivery: 'd', prices: 'pr', validity: 'v' },
+  // A value for every term including the fifth: this fixture exists to make the
+  // model, and a field the model omits is a tag this test cannot vouch for.
+  terms: { payment: 'p', delivery: 'd', prices: 'pr', validity: 'v', warranty: 'w' },
   totals: { sub: 100, tax: 18, total: 118 },
   sourceThread: '', status: 'draft', createdAt: '',
 }

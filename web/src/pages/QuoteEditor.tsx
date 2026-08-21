@@ -31,7 +31,8 @@ export interface QuoteDraft {
   signatory: string
   items: EditorItem[]
   tax: { mode: 'IGST' | 'CGST+SGST'; rate: number }
-  terms: { payment: string; delivery: string; prices: string; validity: string }
+  /** Blank warranty is the ordinary case, and prints no term 5 — see TermsSchema. */
+  terms: { payment: string; delivery: string; prices: string; validity: string; warranty: string }
   /** Set when this draft is a revision of an existing quote — keeps its ref (§10). */
   reviseOf?: string
   /** The ref being revised, for display only. */
@@ -645,7 +646,14 @@ export default function QuoteEditor({
             <TermRow label="Delivery" value={draft.terms.delivery} onChange={(delivery) => set({ terms: { ...draft.terms, delivery } })} />
             <TermRow label="Prices" value={draft.terms.prices} onChange={(prices) => set({ terms: { ...draft.terms, prices } })} />
             <TermRow label="Validity" value={draft.terms.validity} onChange={(validity) => set({ terms: { ...draft.terms, validity } })} />
+            <TermRow label="Warranty" value={draft.terms.warranty} onChange={(warranty) => set({ terms: { ...draft.terms, warranty } })} />
           </div>
+          {/* The four above always print, so only this one needs saying: empty
+              is a real answer here, and the desk can still promise a warranty
+              the lines never mentioned. */}
+          <p className="mt-2 text-[11px] text-ink-faint no-print">
+            blank prints no term 5 — type one here if this quotation promises a warranty
+          </p>
         </div>
 
         <div className="panel p-4">

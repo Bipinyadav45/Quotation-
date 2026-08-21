@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { Quote, QuoteItem, ResolvedCustomer } from '@shared/schema'
-import { itemsFromLines } from './lib/draft'
+import { hoistWarranty, itemsFromLines } from './lib/draft'
 import { DEFAULT_SALESPERSON, DEFAULT_TERMS, GST_RATE_PERCENT } from '@shared/company'
 import { endOfMonth, formatDateLong, toISODate } from '@shared/fy'
 import { formatPaise } from '@shared/money'
@@ -50,6 +50,7 @@ function newDraft(
   items: QuoteItem[],
   customer?: ResolvedCustomer | null,
   validity?: string | null,
+  warranty?: string | null,
 ): QuoteDraft {
   const today = new Date()
   const filled = customer ?? { name: '', address: '', attention: '', gstin: '', state: '' }
@@ -71,6 +72,11 @@ function newDraft(
       // came back as our contractual term. Absent means nobody said, and the
       // default stands.
       validity: validity ?? formatDateLong(endOfMonth(today)),
+      // Term 5 exists only when the lines agreed on one. Absent means either
+      // nobody stated a warranty or two lines stated different ones, and both
+      // of those are the desk's to answer — an empty box to type in, never a
+      // promise we wrote on their behalf.
+      warranty: warranty ?? '',
     },
   }
 }
@@ -281,6 +287,11 @@ export default function App() {
 
               const { items, setAside, assumedQty, warnings: carryWarnings } =
                 itemsFromLines(result.lines)
+              // A warranty is a term, not a specification: the desk states it
+              // once at the foot of the document. So it comes off the lines it
+              // was written on before they reach the draft — hoisted, not
+              // copied, or the same promise prints twice on one page.
+              const { warranty, items: quoted, warnings: warrantyWarnings } = hoistWarranty(items)
               setSkipped([...result.skipped, ...setAside])
 
               setWarnings([
@@ -310,11 +321,22 @@ export default function App() {
                         ' commit to before saving.',
                     ]
                   : []),
+                // Term 5 read off the lines is the same kind of claim as term 4
+                // read off the thread, only wider: one line's promise now stands
+                // over the whole document. It never lands silently.
+                ...warrantyWarnings,
                 ...customerWarnings(result),
               ])
 
               if (result.customer) setLastCustomer(result.customer)
-              setDraft(newDraft(items, result.customer ?? lastCustomer, result.suggestedValidity))
+              setDraft(
+                newDraft(
+                  quoted,
+                  result.customer ?? lastCustomer,
+                  result.suggestedValidity,
+                  warranty,
+                ),
+              )
               setSaved(null)
               setScreen('editor')
             }}

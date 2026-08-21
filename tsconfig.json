@@ -25,5 +25,16 @@
       "@shared/*": ["shared/*"]
     }
   },
-  "include": ["shared", "server/src", "web/src", "vite.config.ts", "vitest.config.ts"]
+  "include": [
+    "shared",
+    "server/src",
+    // The scripts are real TypeScript that imports the real modules, and they
+    // were outside this list: render-preview.ts broke on a schema change that
+    // `tsc --noEmit` structurally could not see, and stayed broken until
+    // somebody happened to run it.
+    "server/scripts",
+    "web/src",
+    "vite.config.ts",
+    "vitest.config.ts"
+  ]
 }
