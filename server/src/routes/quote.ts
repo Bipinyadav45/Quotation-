@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { randomUUID } from 'node:crypto'
 import {
   SaveQuoteRequestSchema,
+  UpdateQuoteRequestSchema,
   UpdateStatusRequestSchema,
   type Quote,
   type QuoteSummary,
@@ -325,6 +326,201 @@ quoteRoutes.get('/quotes/:id', (req, res) => {
   }
   res.json(quote)
 })
+
+/**
+ * Edit a saved quotation in place, keeping its reference.
+ *
+ * The download renders the STORED ROW — render.ts takes a quoteId and calls
+ * loadQuote — while the preview beside the form renders the draft on screen. So
+ * every edit made after a save lived in the preview alone: the desk switched a
+ * Maharashtra quotation to one GST row, watched the preview follow, and
+ * downloaded a PDF still carrying CGST 9% and SGST 9% because that is what the
+ * record said. Saving again fixed it and burned a reference number doing so.
+ * This is the missing half — the same body a save takes, written over the same
+ * row, so the record catches up with the screen instead of the desk paying a
+ * number for it.
+ *
+ * `ref`, `revision`, `status` and `created_at` are absent from the SET clause
+ * on purpose: the first two are the quotation's identity, the third moves only
+ * through /status, and the fourth records when this quotation came into being,
+ * which an edit does not change. `updated_at` moves, because it is the only
+ * column that says when the record was last made to agree with the screen.
+ */
+// The `{ id: string }` is not decoration: Express types a param as
+// `string | string[]` once a middleware sits in front of the handler, and an id
+// that might be an array is an id that cannot be looked up.
+quoteRoutes.put<{ id: string }>(
+  '/quotes/:id',
+  validateBody(UpdateQuoteRequestSchema),
+  (req, res) => {
+    const input = validated(UpdateQuoteRequestSchema, req)
+    const db = getDb()
+    const id = req.params.id
+    const now = new Date().toISOString()
+
+    // Recomputed from the items exactly as POST does. An edit is no more entitled
+    // to send its own totals than a save is.
+    const totals = computeTotals(input.items, input.tax.mode, input.tax.rate)
+
+    type Outcome =
+      | { written: true }
+      | { written: false; reason: 'missing' }
+      | { written: false; reason: 'not-draft'; ref: string; revision: number; status: string }
+
+    const update = db.transaction((): Outcome => {
+      // Read inside the transaction, so the status the refusal is based on is the
+      // status the write would have run against.
+      const existing = db
+        .prepare('SELECT ref, revision, status FROM quotes WHERE id = ?')
+        .get(id) as { ref: string; revision: number; status: string } | undefined
+
+      if (!existing) return { written: false, reason: 'missing' }
+      if (existing.status !== 'draft') return { written: false, reason: 'not-draft', ...existing }
+
+      db.prepare(
+        `UPDATE quotes SET
+           date = @date,
+           customer_name = @customerName,
+           customer_address = @customerAddress,
+           customer_attention = @customerAttention,
+           customer_gstin = @customerGstin,
+           customer_state = @customerState,
+           contact = @contact,
+           email = @email,
+           signatory = @signatory,
+           tax_mode = @taxMode,
+           tax_rate = @taxRate,
+           term_payment = @termPayment,
+           term_delivery = @termDelivery,
+           term_prices = @termPrices,
+           term_validity = @termValidity,
+           term_warranty = @termWarranty,
+           sub_paise = @sub,
+           tax_paise = @tax,
+           total_paise = @total,
+           source_thread = @sourceThread,
+           updated_at = @now
+         WHERE id = @id`,
+      ).run({
+        id,
+        date: input.date,
+        customerName: input.customer.name,
+        customerAddress: input.customer.address,
+        customerAttention: input.customer.attention,
+        customerGstin: input.customer.gstin ?? null,
+        customerState: input.customer.state ?? null,
+        contact: input.contact,
+        email: input.email,
+        signatory: input.signatory,
+        taxMode: input.tax.mode,
+        taxRate: input.tax.rate,
+        termPayment: input.terms.payment,
+        termDelivery: input.terms.delivery,
+        termPrices: input.terms.prices,
+        termValidity: input.terms.validity,
+        termWarranty: input.terms.warranty,
+        sub: totals.sub,
+        tax: totals.tax,
+        total: totals.total,
+        sourceThread: input.sourceThread,
+        now,
+      })
+
+      // Same call a save makes, so a detail corrected on the second look — a
+      // repaired address, a GSTIN finally read off the letterhead — reaches the
+      // customer master instead of dying with the edit.
+      rememberCustomer(db, {
+        name: input.customer.name,
+        address: input.customer.address,
+        attention: input.customer.attention,
+        gstin: input.customer.gstin,
+        state: input.customer.state,
+        contact: input.contact,
+        email: input.email,
+      })
+
+      /**
+       * The lines are replaced wholesale, never diffed.
+       *
+       * The editor reorders rows and deletes them, so line 2 after an edit is
+       * rarely line 2 before it. A positional diff would write one product's
+       * price onto another product's row and look entirely successful doing it,
+       * which is the kind of corruption nobody finds until a customer does.
+       */
+      db.prepare('DELETE FROM quote_items WHERE quote_id = ?').run(id)
+
+      const insertItem = db.prepare(
+        `INSERT INTO quote_items
+           (id, quote_id, line_no, description, make, part_code, hsn, qty, rate_paise, amount_paise)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      input.items.forEach((item, index) => {
+        insertItem.run(
+          randomUUID(),
+          id,
+          index + 1,
+          item.desc,
+          item.make,
+          item.partCode,
+          item.hsn ?? null,
+          item.qty,
+          item.rate,
+          item.qty * item.rate,
+        )
+      })
+
+      return { written: true }
+    })
+
+    const outcome = update()
+
+    if (!outcome.written) {
+      if (outcome.reason === 'missing') {
+        res.status(404).json({ error: `No quote with id ${id}` })
+        return
+      }
+
+      /**
+       * 409, not 403 and not 405.
+       *
+       * Nothing is wrong with the body and nobody is being told they lack
+       * permission — there is no permission in this application, the desk is five
+       * people sharing one file. What refuses the write is the STATE of this row:
+       * 'sent' means a document went to a customer, and rewriting the record
+       * behind it leaves us unable to say what they were sent, which is the one
+       * thing this application exists to be able to say. A conflict with the
+       * current state of the resource is what 409 is for, and it is the code a
+       * taken reference number already uses here for the same reason. 405 would
+       * be a lie: PUT is allowed on this URL, just not on this row today.
+       *
+       * The way out is named in the sentence, because a refusal that does not say
+       * what to do instead gets worked around by deleting the quotation.
+       */
+      const named = outcome.revision > 0 ? `${outcome.ref} Rev ${outcome.revision}` : outcome.ref
+      res.status(409).json({
+        error:
+          `${named} is marked ${outcome.status} and can no longer be edited in place. ` +
+          'Revise it instead: a revision keeps the reference and takes the next revision number.',
+        ref: outcome.ref,
+        revision: outcome.revision,
+        status: outcome.status,
+      })
+      return
+    }
+
+    /**
+     * The stored row, read back — not the request echoed.
+     *
+     * A save can afford to answer with what it was handed. This route cannot: it
+     * exists because a screen and a record disagreed, and an answer assembled
+     * from the request would be the screen agreeing with itself again. What comes
+     * back here is what the download will render.
+     */
+    const stored = loadQuote(id)
+    if (!stored) throw new Error(`Quote ${id} could not be read back after updating it`)
+    res.json(stored)
+  },
+)
 
 quoteRoutes.post('/quotes/:id/status', validateBody(UpdateStatusRequestSchema), (req, res) => {
   const { status } = validated(UpdateStatusRequestSchema, req)

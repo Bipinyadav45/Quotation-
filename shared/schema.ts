@@ -196,6 +196,51 @@ export const SaveQuoteRequestSchema = z.object({
 export type SaveQuoteRequest = z.infer<typeof SaveQuoteRequestSchema>
 
 /**
+ * A field that belongs to a save and cannot belong to an update.
+ *
+ * Typed as "must be absent" rather than left out of the schema, because a key
+ * merely left out is a key silently thrown away — and an update that accepted
+ * new initials, kept the old reference and said nothing would be the very
+ * divergence between the screen and the record that PUT exists to end. Present
+ * with a value, it is a 400 carrying this sentence; absent, it costs nothing.
+ */
+const notOnAnUpdate = (message: string) => z.undefined({ invalid_type_error: message })
+
+/**
+ * Editing a quotation that is already saved, in place (PUT /api/quotes/:id).
+ *
+ * The same body a save takes, minus everything that decides a reference.
+ * `ref` and `revision` are the quotation's identity — they are printed on a
+ * document that may already be with a customer — so an update must not be able
+ * to reach them: `initials` chooses the series, `seqOverride` chooses the
+ * number, and `reviseOf` takes a different reference altogether.
+ *
+ * Built by overriding those three on SaveQuoteRequestSchema rather than by
+ * restating the fields, so a field added to a save is a field an edit can
+ * change on the same day rather than one the two schemas quietly disagree
+ * about.
+ *
+ * `totals` is not mentioned here for the same reason it is not mentioned on a
+ * save: it is recomputed from the items server-side, so a figure the browser
+ * sends is ignored rather than trusted.
+ */
+export const UpdateQuoteRequestSchema = SaveQuoteRequestSchema.extend({
+  initials: notOnAnUpdate(
+    'initials cannot change on an edit: they are part of the reference this quotation ' +
+      'already carries. Save it as a new quotation to use another series.',
+  ),
+  seqOverride: notOnAnUpdate(
+    'The reference number cannot change on an edit. Save it as a new quotation to ' +
+      'choose another number.',
+  ),
+  reviseOf: notOnAnUpdate(
+    'An edit rewrites this draft in place. To keep the version already saved, POST ' +
+      '/api/quote with reviseOf and take the next revision number instead.',
+  ),
+})
+export type UpdateQuoteRequest = z.infer<typeof UpdateQuoteRequestSchema>
+
+/**
  * A remembered customer. Built from saved quotations rather than typed into a
  * screen of its own — see server/src/lib/customers.ts.
  */

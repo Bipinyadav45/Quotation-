@@ -2,7 +2,18 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { chooseRef } from './pages/QuoteEditor'
+import { CustomerSchema, QuoteItemSchema, QuoteSchema, TermsSchema, type Quote } from '@shared/schema'
+import {
+  DOCUMENT_FIELDS,
+  NOT_COMPARED,
+  changeLabels,
+  chooseRef,
+  documentChanges,
+  downloadCurrent,
+  type DocumentField,
+  type EditorItem,
+  type QuoteDraft,
+} from './pages/QuoteEditor'
 
 /**
  * The points where a screen hands on work something else did for it.
@@ -30,6 +41,14 @@ import { chooseRef } from './pages/QuoteEditor'
  * choose the number, and that one number has to reach the document beside the
  * form AND the save request — show one and claim the other, and a quotation goes
  * out under a reference the file does not have.
+ *
+ * The fifth is the one a customer saw. The document beside the form is built
+ * from the DRAFT; the download is built from the SAVED ROW, because /api/render
+ * takes a quoteId and loads it. So a tax mode switched after the save moved the
+ * preview and not the file, and the button that handed over last week's document
+ * said nothing about it. The seam now has two halves — a comparison of the two,
+ * over a field list taken from the record's own type so a new field cannot be
+ * left out of it, and a download that writes before it renders.
  *
  * These read the source rather than a rendered screen because the suite runs
  * in node with no DOM, and what is being guarded — a field going missing at
@@ -178,5 +197,290 @@ describe('the reference number the desk chose', () => {
     const carried = /[{,]\s*seqOverride\s*(?::\s*([\w.]+))?\s*[,}]/.exec(payload)
     expect(carried, 'the request no longer carries the chosen number').not.toBeNull()
     expect(carried![1] ?? 'seqOverride', 'the request sends a number of its own').toBe(decided![1])
+  })
+})
+
+/**
+ * A saved quotation and the screen it was saved from.
+ *
+ * Deliberately a repeat of the row that produced the bug: a Maharashtra
+ * customer whose stored tax mode is CGST+SGST, which the desk then changed on
+ * screen to one IGST row and downloaded.
+ */
+const SAVED: Quote = {
+  id: 'q-028',
+  ref: 'NCS/2026-27/Quotes/RG/028',
+  revision: 0,
+  date: '2026-08-18',
+  customer: {
+    name: 'Morgan Stanley',
+    address: 'Nirlon Knowledge Park\nGoregaon East, Mumbai',
+    attention: 'Mr Rao',
+    gstin: '27AABCM1234F1Z5',
+    state: 'Maharashtra',
+  },
+  contact: '+91 22 1234 5678',
+  email: 'sales@newtech.example',
+  signatory: 'R Gupta',
+  items: [
+    { desc: 'USB-C to USB-A 1.5 mtr', make: 'Black i', partCode: 'BI-TCHUGP', hsn: '8544', qty: 2, rate: 55_000 },
+    { desc: 'Wireless keyboard', make: 'Logitech', partCode: 'MK540', hsn: '8471', qty: 1, rate: 425_000 },
+  ],
+  tax: { mode: 'CGST+SGST', rate: 18 },
+  terms: {
+    payment: '100% advance',
+    delivery: '2 weeks',
+    prices: 'Ex-works Mumbai',
+    validity: '31st August 2026',
+    warranty: '',
+  },
+  totals: { sub: 535_000, tax: 96_300, total: 631_300 },
+  sourceThread: 'the thread this came out of',
+  status: 'draft',
+  createdAt: '2026-08-18T09:00:00.000Z',
+}
+
+/**
+ * The screen as it stood the instant that record was written.
+ *
+ * `key` and `rateText` are the editor's own — a react key and a half-typed rate
+ * box — and neither reaches a document, so this deliberately fills rateText with
+ * something the formatter would never produce. A comparison that noticed it
+ * would have the warning up on a quotation nobody has touched.
+ */
+const screenFor = (quote: Quote): QuoteDraft => ({
+  date: quote.date,
+  initials: 'RG',
+  customer: {
+    name: quote.customer.name,
+    address: quote.customer.address,
+    attention: quote.customer.attention,
+    gstin: quote.customer.gstin ?? '',
+    state: quote.customer.state ?? '',
+  },
+  contact: quote.contact,
+  email: quote.email,
+  signatory: quote.signatory,
+  items: quote.items.map((item, i) => ({
+    key: `row-${i}`,
+    desc: item.desc,
+    make: item.make,
+    partCode: item.partCode,
+    hsn: item.hsn ?? '',
+    qty: item.qty,
+    rate: item.rate,
+    rateText: String(item.rate),
+  })),
+  tax: quote.tax,
+  terms: quote.terms,
+})
+
+/**
+ * One change per field, so the loop below is driven by the record's own field
+ * list rather than by a list written out here. A field added to QuoteSchema and
+ * classed as reaching the document fails to compile until it has a move.
+ */
+const MOVED: Record<DocumentField, (draft: QuoteDraft) => QuoteDraft> = {
+  date: (d) => ({ ...d, date: '2026-09-01' }),
+  customer: (d) => ({ ...d, customer: { ...d.customer, address: 'somewhere else entirely' } }),
+  contact: (d) => ({ ...d, contact: '+91 22 0000 0000' }),
+  email: (d) => ({ ...d, email: 'somebody.else@newtech.example' }),
+  signatory: (d) => ({ ...d, signatory: 'S Nair' }),
+  // Reordered, not retyped: a quotation whose lines are in a different order is
+  // a different document, and a length-only check would call this unchanged.
+  items: (d) => ({ ...d, items: [...d.items].reverse() }),
+  tax: (d) => ({ ...d, tax: { ...d.tax, mode: 'IGST' } }),
+  terms: (d) => ({ ...d, terms: { ...d.terms, validity: '30th September 2026' } }),
+}
+
+describe('the screen and the record it was saved as', () => {
+  it('says nothing while they still agree', () => {
+    expect(documentChanges(screenFor(SAVED), SAVED)).toEqual([])
+  })
+
+  it('says nothing about a quotation that has never been saved', () => {
+    // No record behind it to disagree with, and the Save button already says so.
+    expect(documentChanges(screenFor(SAVED), null)).toEqual([])
+  })
+
+  it('has an answer for every field a stored quotation has', () => {
+    // The one that was actually missed: the schema grows a field, the screen
+    // grows a box for it, and the comparison never hears about it — so the
+    // download quietly goes back to being the older document for that field
+    // alone. Every key of the record is either compared or declared to be none
+    // of this screen's business; there is no third option.
+    const stored = Object.keys(QuoteSchema.shape).sort()
+    expect(
+      [...DOCUMENT_FIELDS, ...NOT_COMPARED].sort(),
+      `unclassified: ${stored.filter((k) => ![...DOCUMENT_FIELDS, ...NOT_COMPARED].includes(k as never)).join(', ')}`,
+    ).toEqual(stored)
+  })
+
+  it('notices every field that reaches the document', () => {
+    for (const field of DOCUMENT_FIELDS) {
+      expect(
+        documentChanges(MOVED[field](screenFor(SAVED)), SAVED),
+        `a changed ${field} goes unnoticed, so the download stays the older document`,
+      ).toContain(field)
+    }
+  })
+
+  it('notices the tax rate typed over, not only the mode', () => {
+    const screen = screenFor(SAVED)
+    const changed = { ...screen, tax: { ...screen.tax, rate: 12 } }
+    expect(documentChanges(changed, SAVED)).toContain('tax')
+  })
+
+  it('notices every customer field the record carries', () => {
+    for (const field of Object.keys(CustomerSchema.shape)) {
+      const screen = screenFor(SAVED)
+      const customer = { ...screen.customer, [field]: 'something else' } as QuoteDraft['customer']
+      expect(
+        documentChanges({ ...screen, customer }, SAVED),
+        `a changed customer ${field} goes unnoticed`,
+      ).toContain('customer')
+    }
+  })
+
+  it('notices every field a line carries', () => {
+    for (const field of Object.keys(QuoteItemSchema.shape)) {
+      const screen = screenFor(SAVED)
+      const first = screen.items[0]! as unknown as Record<string, unknown>
+      // Rates and quantities are integers — paise for the rate — so they are
+      // moved by one rather than replaced with a word.
+      const moved = typeof first[field] === 'number' ? (first[field] as number) + 1 : 'something else'
+      const items = [{ ...screen.items[0]!, [field]: moved } as EditorItem, ...screen.items.slice(1)]
+      expect(
+        documentChanges({ ...screen, items }, SAVED),
+        `a changed ${field} on a line goes unnoticed`,
+      ).toContain('items')
+    }
+  })
+
+  it('notices every term the schema declares', () => {
+    for (const field of Object.keys(TermsSchema.shape)) {
+      const screen = screenFor(SAVED)
+      const terms = { ...screen.terms, [field]: 'something else' } as QuoteDraft['terms']
+      expect(
+        documentChanges({ ...screen, terms }, SAVED),
+        `a changed ${field} term goes unnoticed`,
+      ).toContain('terms')
+    }
+  })
+
+  it('reads a blank box and an empty column as the same absent value', () => {
+    // The record holds undefined where the form holds ''. Read as a difference,
+    // the warning would be up on every quotation with no GSTIN on file.
+    const bare: Quote = { ...SAVED, customer: { ...SAVED.customer, gstin: undefined, state: undefined } }
+    expect(documentChanges(screenFor(bare), bare)).toEqual([])
+  })
+
+  it('names what changed in words the desk can read', () => {
+    const screen = MOVED.tax(MOVED.customer(screenFor(SAVED)))
+    expect(changeLabels(documentChanges(screen, SAVED))).toEqual(['the customer', 'the tax'])
+  })
+})
+
+describe('downloading a quotation the screen has moved on from', () => {
+  it('writes the changes before anything is rendered', async () => {
+    const order: string[] = []
+    await downloadCurrent({
+      changed: true,
+      persist: async () => void order.push('persist'),
+      render: async () => void order.push('render'),
+    })
+    expect(order, 'the file was built from the record before the record caught up').toEqual([
+      'persist',
+      'render',
+    ])
+  })
+
+  it('renders nothing at all when the write failed', async () => {
+    // Otherwise this is the original bug with an error message over it: the desk
+    // still gets the older document, and now believes it is current.
+    let rendered = false
+    await expect(
+      downloadCurrent({
+        changed: true,
+        persist: () => Promise.reject(new Error('is marked sent and can no longer be edited')),
+        render: async () => void (rendered = true),
+      }),
+    ).rejects.toThrow(/marked sent/)
+    expect(rendered, 'the older document was handed over anyway').toBe(false)
+  })
+
+  it('writes nothing when the screen and the record already agree', async () => {
+    let persisted = false
+    await downloadCurrent({
+      changed: false,
+      persist: async () => void (persisted = true),
+      render: async () => {},
+    })
+    expect(persisted, 'an untouched quotation was rewritten just to download it').toBe(false)
+  })
+
+  it('is the only route the buttons have to the renderer', () => {
+    const editor = withoutComments(read('web', 'src', 'pages', 'QuoteEditor.tsx'))
+    const body = objectAfter(editor, 'async function download(')
+
+    expect(body, 'the download no longer goes through downloadCurrent').toContain('downloadCurrent(')
+    // Inside the call rather than beside it: handed over as the step that runs
+    // second, not fired off in parallel with the write.
+    const ordered = objectAfter(body, 'downloadCurrent(')
+    expect(ordered, 'the render is not the one downloadCurrent orders').toContain('apiDownload(')
+    expect(
+      [...editor.matchAll(/apiDownload\(/g)].length,
+      'something renders without ordering the write first',
+    ).toBe(1)
+
+    // And the flag it is ordered by is the one the buttons label themselves
+    // from: a press that writes has to be a press that said it would, and the
+    // fixed guard has to be in the same answer or the screen asks for a PUT it
+    // knows will come back 409.
+    const flag = /changed:\s*(\w+)/.exec(ordered)
+    expect(flag, 'the download no longer decides whether it is writing').not.toBeNull()
+    const name = flag![1]!
+    expect(editor, name + ' is not the difference and the draft guard together').toMatch(
+      new RegExp(String.raw`const ${name} = changes\.[^\n]*\bfixed\b`),
+    )
+    expect(
+      [...editor.matchAll(new RegExp(String.raw`\b${name}\b`, 'g'))].length,
+      name + ' decides the write but never reaches the buttons',
+    ).toBeGreaterThan(3)
+  })
+
+  it('writes through the update route and keeps what it answers', () => {
+    const editor = withoutComments(read('web', 'src', 'pages', 'QuoteEditor.tsx'))
+    const persist = objectAfter(editor, 'async function persist(')
+
+    expect(persist, 'the edit no longer goes to the update route').toMatch(/\/api\/quotes\//)
+    // The row read back after the commit, not the request echoed — this screen
+    // exists because a screen and a record disagreed, so it takes the record's
+    // word for what it now holds.
+    expect(persist, "the update's answer is not what the screen goes on showing").toContain('onSaved(')
+  })
+
+  it('sends nothing that would decide a reference', () => {
+    // All three are a 400 on PUT, and refused rather than stripped for a reason:
+    // an edit that quietly kept the old reference under new initials would be
+    // this very divergence again.
+    const body = objectAfter(withoutComments(read('web', 'src', 'pages', 'QuoteEditor.tsx')), 'function documentBody(')
+    for (const decides of ['initials', 'seqOverride', 'reviseOf']) {
+      expect(body, `the body an edit sends carries ${decides}`).not.toContain(decides)
+    }
+  })
+
+  it('warns and writes from the one answer', () => {
+    // The callout says a thing and the button does a thing; worked out twice
+    // they drift, and the drift is silent — a button that writes beside a screen
+    // that never said it would.
+    const editor = withoutComments(read('web', 'src', 'pages', 'QuoteEditor.tsx'))
+    expect(editor, 'the difference is worked out somewhere other than documentChanges').toMatch(
+      /const changes = documentChanges\(draft, saved\)/,
+    )
+    expect(
+      [...editor.matchAll(/documentChanges\(/g)].length,
+      'the screen asks twice, and can be told two different things',
+    ).toBe(2)
   })
 })

@@ -3,7 +3,7 @@ import type { CustomerRecord, ExtractedCustomer, PriceMatch, Quote } from '@shar
 import { amountInWords, computeTotals, formatPaise, pad2, parseRupeesToPaise } from '@shared/money'
 import { formatDateLong, fromISODate } from '@shared/fy'
 import { INDIAN_STATES, taxModeForState } from '@shared/states'
-import { apiDownload, apiPost, useApi } from '../lib/api'
+import { apiDownload, apiPost, apiPut, useApi } from '../lib/api'
 import Callout from '../components/Callout'
 import CoveringEmail from '../components/CoveringEmail'
 import CustomerField from '../components/CustomerField'
@@ -134,13 +134,110 @@ export default function QuoteEditor({
     terms: draft.terms,
   }
 
+  /**
+   * Where this screen has got to that the saved record has not.
+   *
+   * The two are rendered from different things: the document above comes from
+   * the draft, the download comes from the stored row — /api/render takes a
+   * quoteId and loads it. So every edit made after a save lived on screen alone.
+   * Switch a Maharashtra quotation to one GST row and the preview follows; the
+   * PDF still prints CGST 9% and SGST 9%, because that is what the record says.
+   *
+   * Recomputed on every keystroke rather than memoised: it is a walk of one
+   * quotation's fields, and a stale answer here is the bug it exists to catch.
+   */
+  const changes = documentChanges(draft, saved)
+  /**
+   * A quotation that is no longer a draft is fixed. A document has gone out and
+   * the record behind it is our only account of what the customer was sent, so
+   * the update route refuses it with a 409 — and this screen does not ask for
+   * one it knows will be refused. It offers a revision instead.
+   */
+  const fixed = saved !== null && status !== 'draft'
+  /** Set when pressing a download will WRITE before it renders — so the button says so. */
+  const willWrite = changes.length > 0 && !fixed
+  /**
+   * The quotation by name, written the way the header and the server's own
+   * refusals write it. A bare reference names three documents once a quotation
+   * has been revised twice.
+   */
+  const savedName = saved
+    ? saved.revision > 0
+      ? `${saved.ref} Rev ${saved.revision}`
+      : saved.ref
+    : ''
+
+  /**
+   * The quotation as the server takes it, built once for both routes that take
+   * it.
+   *
+   * A save adds the initials and the number on top of this; an edit is
+   * forbidden to send either, because the reference is the one thing it is
+   * keeping. Sharing the body is the whole point — a field added to the form
+   * has to reach the record whichever button writes it, and two literals would
+   * eventually disagree about which fields those are.
+   */
+  function documentBody() {
+    return {
+      date: draft.date,
+      customer: {
+        name: draft.customer.name,
+        address: draft.customer.address,
+        attention: draft.customer.attention,
+        ...(draft.customer.gstin ? { gstin: draft.customer.gstin } : {}),
+        ...(draft.customer.state ? { state: draft.customer.state } : {}),
+      },
+      contact: draft.contact,
+      email: draft.email,
+      signatory: draft.signatory,
+      items: draft.items.map((i) => ({
+        desc: i.desc,
+        make: i.make,
+        partCode: i.partCode,
+        ...(i.hsn ? { hsn: i.hsn } : {}),
+        qty: i.qty,
+        rate: i.rate,
+      })),
+      tax: draft.tax,
+      terms: draft.terms,
+      sourceThread,
+    }
+  }
+
+  /**
+   * Write this screen over the row it was saved as, keeping its reference.
+   *
+   * Until this existed the only way to make the file agree with the screen was
+   * to save again, which allocates a new number — the desk paid a reference for
+   * a corrected address. PUT rewrites the same row, so the ref, the revision and
+   * the date it was created stay as they are.
+   *
+   * What comes back is the row read back from the database, not the request
+   * echoed, and that is what `saved` becomes: this screen exists because a
+   * screen and a record disagreed, so it takes the record's word for it.
+   */
+  async function persist(): Promise<Quote> {
+    if (!saved) throw new Error('There is nothing saved to write these changes to.')
+    const updated = await apiPut<Quote>(`/api/quotes/${saved.id}`, documentBody())
+    onSaved(updated)
+    return updated
+  }
+
   async function download(kind: 'docx' | 'pdf') {
     if (!saved) return
     setBusy(kind)
     setMessage(null)
     try {
-      await apiDownload(`/api/render/${kind}`, { quoteId: saved.id })
+      await downloadCurrent({
+        // A fixed quotation is downloaded as it stands. The callout above these
+        // buttons says so in words, and a PUT here would only come back 409.
+        changed: willWrite,
+        persist,
+        render: () => apiDownload(`/api/render/${kind}`, { quoteId: saved.id }),
+      })
     } catch (err) {
+      // The server's own sentence — the field a 400 names, the status a 409
+      // names — reaching the desk exactly as a save error already does.
       setMessage({ tone: 'problem', text: (err as Error).message })
     } finally {
       setBusy(null)
@@ -231,29 +328,10 @@ export default function QuoteEditor({
     setError(null)
     try {
       const quote = await apiPost<Quote>('/api/quote', {
-        date: draft.date,
+        ...documentBody(),
+        // The three an edit may not send, because these are the three that
+        // decide the reference and a save is where a reference is decided.
         initials: draft.initials,
-        customer: {
-          name: draft.customer.name,
-          address: draft.customer.address,
-          attention: draft.customer.attention,
-          ...(draft.customer.gstin ? { gstin: draft.customer.gstin } : {}),
-          ...(draft.customer.state ? { state: draft.customer.state } : {}),
-        },
-        contact: draft.contact,
-        email: draft.email,
-        signatory: draft.signatory,
-        items: draft.items.map((i) => ({
-          desc: i.desc,
-          make: i.make,
-          partCode: i.partCode,
-          ...(i.hsn ? { hsn: i.hsn } : {}),
-          qty: i.qty,
-          rate: i.rate,
-        })),
-        tax: draft.tax,
-        terms: draft.terms,
-        sourceThread,
         ...(draft.reviseOf ? { reviseOf: draft.reviseOf } : {}),
         // Absent unless the desk moved off the number the server offered.
         // Sending the peek back would make every save an override, and the
@@ -719,7 +797,11 @@ export default function QuoteEditor({
           <div className="mb-1.5 flex items-baseline justify-between">
             <h3 className="label">Document</h3>
             <span className="text-[11px] text-ink-faint no-print">
-              {saved ? 'saved — downloads below' : 'updates as you type · save to download'}
+              {!saved
+                ? 'updates as you type · save to download'
+                : changes.length > 0
+                  ? 'changed since it was saved'
+                  : 'saved — downloads below'}
             </span>
           </div>
 
@@ -756,24 +838,74 @@ export default function QuoteEditor({
             }
           />
 
+          {/* Beside the downloads, because that is where the wrong document used
+              to be handed over without a word. Amber: §9 keeps it for drift, and
+              a screen and a file that have parted company is exactly that. */}
+          {saved && changes.length > 0 && (
+            <Callout
+              tone="drift"
+              label={fixed ? 'Fixed' : 'Only on screen'}
+              className="mt-3 no-print"
+            >
+              {fixed ? (
+                <>
+                  {savedName} is marked {status}, and a document that has gone out cannot be
+                  rewritten — the record behind it is our only account of what the customer was
+                  sent. So the downloads below are that document, not this screen. Changed here:{' '}
+                  {changeLabels(changes).join(' · ')}. Revise it instead: the button below keeps the
+                  reference and takes the next revision number.
+                </>
+              ) : (
+                <>
+                  {savedName} still holds the older document, and a download is built from the
+                  record rather than from this screen. Changed here:{' '}
+                  {changeLabels(changes).join(' · ')}. Downloading writes these changes to{' '}
+                  {savedName} first — same reference, same revision, no new number taken.
+                </>
+              )}
+            </Callout>
+          )}
+
           <div className="mt-3 flex flex-wrap items-center gap-2 no-print">
             <button
               type="button"
               className="btn btn-primary"
               onClick={() => download('docx')}
               disabled={!saved || busy !== null}
-              title={saved ? 'The editable Word file, on the letterhead' : 'Save it first'}
+              title={
+                !saved
+                  ? 'Save it first'
+                  : willWrite
+                    ? `Writes these changes to ${savedName} first, then builds the Word file`
+                    : 'The editable Word file, on the letterhead'
+              }
             >
-              {busy === 'docx' ? 'Building…' : 'Download Word'}
+              {busy === 'docx'
+                ? 'Building…'
+                : willWrite
+                  ? 'Save changes and download Word'
+                  : 'Download Word'}
             </button>
             <button
               type="button"
               className="btn"
               onClick={() => download('pdf')}
               disabled={!saved || busy !== null || !pdfReady}
-              title={!saved ? 'Save it first' : pdfReady ? 'Converted from the same Word file' : pdfDetail}
+              title={
+                !saved
+                  ? 'Save it first'
+                  : !pdfReady
+                    ? pdfDetail
+                    : willWrite
+                      ? `Writes these changes to ${savedName} first, then converts the Word file`
+                      : 'Converted from the same Word file'
+              }
             >
-              {busy === 'pdf' ? 'Converting…' : 'Download PDF'}
+              {busy === 'pdf'
+                ? 'Converting…'
+                : willWrite
+                  ? 'Save changes and download PDF'
+                  : 'Download PDF'}
             </button>
 
             {saved && (
@@ -915,6 +1047,154 @@ export function chooseRef(
     pendingRef: `NCS/…/${initials.toUpperCase()}/${chosen === null ? '???' : pad3(chosen)}`,
     ...(chosen !== null && chosen !== peeked ? { seqOverride: chosen } : {}),
   }
+}
+
+/**
+ * What a stored quotation holds that this screen cannot make differ, each for
+ * its own reason.
+ *
+ * `id`, `ref`, `revision` and `createdAt` are the quotation's identity and the
+ * update route refuses to write them — they are printed on a document that may
+ * already be with a customer. `status` moves only through the Status box beside
+ * the downloads. `totals` are recomputed from the lines at both ends, so they
+ * cannot differ without the lines differing first, and comparing them would
+ * only ever repeat what `items` already said. `sourceThread` is the email the
+ * quotation came out of rather than anything printed on it, and a thread that
+ * has moved on is already said, in its own words, at the top of this screen.
+ *
+ * Listed rather than assumed, because the type below is the complement of it:
+ * a field that is not named here is a field the desk is answerable for.
+ */
+export const NOT_COMPARED = [
+  'id',
+  'ref',
+  'revision',
+  'totals',
+  'sourceThread',
+  'status',
+  'createdAt',
+] as const
+
+/**
+ * Everything else — the fields that reach the letterhead — named by the type of
+ * the record rather than by a list kept here.
+ *
+ * Add a field to QuoteSchema and this widens on its own, and the table below
+ * stops compiling until the new field is either compared or declared above to
+ * be none of this screen's business. That is the only reason it is a type and
+ * not eight strings: a field nobody remembered to compare is a field that
+ * changes on screen and never reaches the file.
+ */
+export type DocumentField = Exclude<keyof Quote, (typeof NOT_COMPARED)[number]>
+
+/**
+ * A blank box and a column that was never filled in are the same absent value.
+ * The draft holds '' where the record holds undefined, and reading that as a
+ * change would put the warning up on a quotation nobody has touched.
+ */
+const sameText = (a: string | undefined, b: string | undefined) => (a ?? '') === (b ?? '')
+
+/**
+ * How each field is compared, and what the callout calls it when it differs.
+ *
+ * Together in one entry so the two cannot drift apart, the way chooseRef keeps
+ * the reference shown and the number claimed in one answer.
+ */
+const COMPARED: {
+  [F in DocumentField]: { label: string; unchanged: (draft: QuoteDraft, saved: Quote) => boolean }
+} = {
+  date: { label: 'the date', unchanged: (d, s) => d.date === s.date },
+  customer: {
+    label: 'the customer',
+    unchanged: (d, s) =>
+      sameText(d.customer.name, s.customer.name) &&
+      sameText(d.customer.address, s.customer.address) &&
+      sameText(d.customer.attention, s.customer.attention) &&
+      sameText(d.customer.gstin, s.customer.gstin) &&
+      // Never printed, but it decides the tax split and it is what the customer
+      // master learns from a write, so a record still holding the old state is a
+      // record this screen has quietly parted company with.
+      sameText(d.customer.state, s.customer.state),
+  },
+  contact: { label: 'the contact number', unchanged: (d, s) => d.contact === s.contact },
+  email: { label: 'the email address', unchanged: (d, s) => d.email === s.email },
+  items: {
+    label: 'the lines',
+    unchanged: (d, s) =>
+      // Position by position: the desk reorders rows, and a quotation whose
+      // lines are in a different order is a different document.
+      d.items.length === s.items.length &&
+      d.items.every((item, i) => {
+        const stored = s.items[i]!
+        return (
+          sameText(item.desc, stored.desc) &&
+          sameText(item.make, stored.make) &&
+          sameText(item.partCode, stored.partCode) &&
+          sameText(item.hsn, stored.hsn) &&
+          item.qty === stored.qty &&
+          // Paise both sides, compared as the integers they are.
+          item.rate === stored.rate
+        )
+      }),
+  },
+  tax: {
+    label: 'the tax',
+    unchanged: (d, s) => d.tax.mode === s.tax.mode && d.tax.rate === s.tax.rate,
+  },
+  terms: {
+    label: 'the terms',
+    unchanged: (d, s) =>
+      sameText(d.terms.payment, s.terms.payment) &&
+      sameText(d.terms.delivery, s.terms.delivery) &&
+      sameText(d.terms.prices, s.terms.prices) &&
+      sameText(d.terms.validity, s.terms.validity) &&
+      sameText(d.terms.warranty, s.terms.warranty),
+  },
+  signatory: { label: 'the signatory', unchanged: (d, s) => d.signatory === s.signatory },
+}
+
+export const DOCUMENT_FIELDS = Object.keys(COMPARED) as DocumentField[]
+
+/**
+ * Which fields the screen and the saved record disagree about.
+ *
+ * By value and never by identity. The draft is a fresh object on every
+ * keystroke, so anything shaped like `draft !== saved` is true from the first
+ * character typed and would leave the warning up permanently — a warning that is
+ * always on is a warning nobody reads, and this one has to still be legible on
+ * the day it matters.
+ *
+ * Nothing saved is nothing to disagree with: an unsaved quotation has no record
+ * behind it, and the Save button already says so.
+ */
+export function documentChanges(draft: QuoteDraft, saved: Quote | null): DocumentField[] {
+  if (!saved) return []
+  return DOCUMENT_FIELDS.filter((field) => !COMPARED[field].unchanged(draft, saved))
+}
+
+/** The changed fields as the desk reads them, in the order they print. */
+export const changeLabels = (fields: DocumentField[]) => fields.map((f) => COMPARED[f].label)
+
+/**
+ * The two halves of a download, in the only order they work in.
+ *
+ * Handed its work rather than reaching for it, so the order can be PROVED
+ * without a browser instead of read and hoped for. /api/render loads the stored
+ * row, so a screen that has moved on since the save has to put the row right
+ * before anything is rendered off it — that is the whole of this fix.
+ *
+ * `render` runs only if `persist` resolved. A write that failed followed by a
+ * download that went ahead anyway is the original bug with an error message
+ * over it: the desk still gets the older document, and now believes it is
+ * current because they watched it save.
+ */
+export async function downloadCurrent(step: {
+  changed: boolean
+  persist: () => Promise<unknown>
+  render: () => Promise<void>
+}): Promise<void> {
+  if (step.changed) await step.persist()
+  await step.render()
 }
 
 // Both defined in index.css, so the "boxed = editable" convention is stated in

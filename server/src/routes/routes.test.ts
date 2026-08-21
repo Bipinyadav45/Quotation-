@@ -41,6 +41,7 @@ describe('the API surface', () => {
       'POST /price-history',
       'POST /quote',
       'POST /quotes/:id/status',
+      'PUT /quotes/:id',
     ])
   })
 
