@@ -239,8 +239,39 @@ async function convertOnce(input: Buffer, extension: string): Promise<Buffer> {
 
     return readFileSync(outputPath)
   } finally {
-    rmSync(jobDir, { recursive: true, force: true })
+    discard(jobDir)
   }
+}
+
+/**
+ * Delete a finished job directory, and never let that deletion become the
+ * failure.
+ *
+ * `force: true` swallows a missing path but NOT a locked one, and on Windows
+ * the converter can still hold a handle for a moment after the process has
+ * exited — Word especially, which releases its COM objects on its own schedule.
+ * The result was EBUSY thrown out of a `finally` block: a conversion that had
+ * already produced a perfectly good PDF reported a crash instead, and because
+ * this also runs at boot it took the whole API process down with it.
+ *
+ * So: a few short retries, then give up quietly. A directory left behind costs
+ * a few hundred kilobytes until the next boot, which is precisely what
+ * cleanTempDir exists to sweep up. Losing a rendered document, or the server,
+ * costs considerably more.
+ */
+function discard(dir: string): void {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      rmSync(dir, { recursive: true, force: true })
+      return
+    } catch {
+      // Busy-wait rather than await: this is called from a finally block that
+      // must not change the shape of what it is wrapping.
+      const until = Date.now() + 40
+      while (Date.now() < until) { /* let the handle close */ }
+    }
+  }
+  console.warn(`[pdf] could not remove ${dir}; it will be swept at the next start`)
 }
 
 /**
@@ -291,9 +322,14 @@ export async function warmUp(): Promise<void> {
   }
 }
 
-/** Clear anything a previous crash left behind. Called at boot. */
+/**
+ * Clear anything a previous crash left behind. Called at boot.
+ *
+ * Tolerant of a directory still locked by a converter that has not quite let go
+ * — a stale temp file is not a reason to refuse to start.
+ */
 export function cleanTempDir(): void {
-  rmSync(TMP_ROOT, { recursive: true, force: true })
+  discard(TMP_ROOT)
   mkdirSync(TMP_ROOT, { recursive: true })
 }
 

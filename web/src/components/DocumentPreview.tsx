@@ -1,5 +1,5 @@
 import { Fragment } from 'react'
-import { COMPANY } from '@shared/company'
+import { COMPANY, gstinLine } from '@shared/company'
 import { splitDescription } from '@shared/description'
 import { computeTotals, formatPaise, pad2 } from '@shared/money'
 import { ORDINAL_SUFFIX_RE, formatDateParts, fromISODate } from '@shared/fy'
@@ -10,7 +10,8 @@ export interface DocumentData {
   revision: number
   /** YYYY-MM-DD */
   date: string
-  customer: { name: string; address: string; attention: string }
+  /** `gstin` optional exactly as the schema has it: a customer can have none on file. */
+  customer: { name: string; address: string; attention: string; gstin?: string }
   contact: string
   email: string
   signatory: string
@@ -93,6 +94,12 @@ export default function DocumentPreview({ data, pendingRef }: Props) {
   // unbroken cell runs past Sub Total, the tax rows and Total.
   const totalsRows = 2 + totals.taxRows.length
   const lastItem = data.items.length - 1
+  // Label and value in one string, from the same helper the document renders
+  // from, so neither side can print a GSTIN label with nothing after it. Where
+  // the document degrades to an empty paragraph the preview shows nothing,
+  // which is how the address lines above already treat their blanks.
+  const customerGstin = gstinLine(data.customer.gstin)
+  const companyGstin = gstinLine(COMPANY.gstin)
 
   return (
     <div className="panel bg-paper-raised p-6 font-serif text-[12px] leading-relaxed">
@@ -126,6 +133,12 @@ export default function DocumentPreview({ data, pendingRef }: Props) {
                     {l}
                   </span>
                 ))}
+              {customerGstin && (
+                <span>
+                  <br />
+                  {customerGstin}
+                </span>
+              )}
             </td>
             <td className={SHADED} style={{ width: pct(HEADER_W, 1) }}>
               <span className="font-bold">From: </span>
@@ -137,6 +150,12 @@ export default function DocumentPreview({ data, pendingRef }: Props) {
                   {withOrdinals(l)}
                 </span>
               ))}
+              {companyGstin && (
+                <span>
+                  <br />
+                  {companyGstin}
+                </span>
+              )}
             </td>
           </tr>
           <tr>
@@ -152,9 +171,9 @@ export default function DocumentPreview({ data, pendingRef }: Props) {
       </table>
 
       <p>Dear Sir,</p>
-      <p>Please find the following Quotation for your kind consideration: -</p>
+      <p>Please find the following Proforma Invoice for your kind consideration: -</p>
       {/* Heading5 in the letterhead: centred, bold, underlined. */}
-      <p className="my-2 text-center font-bold underline">Quotation</p>
+      <p className="my-2 text-center font-bold underline">Proforma Invoice</p>
 
       <table className="w-full table-fixed border border-ink/30 text-[11.5px]">
         <thead>

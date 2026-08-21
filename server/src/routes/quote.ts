@@ -14,7 +14,6 @@ import { allocateRef, peekNextSeq } from '../lib/refno.js'
 import { loadMakes } from '../lib/makes.js'
 import { rememberCustomer, searchCustomers } from '../lib/customers.js'
 import { findPastPrices } from '../lib/priceHistory.js'
-import { extractCustomerFromThread } from '../lib/extractCustomer.js'
 import { draftCoveringEmail } from '../lib/draftEmail.js'
 import { z } from 'zod'
 
@@ -222,22 +221,6 @@ quoteRoutes.post('/quote', validateBody(SaveQuoteRequestSchema), (req, res) => {
   })
 
   res.status(201).json(save())
-})
-
-/**
- * Read the customer's details out of a thread. Never writes them anywhere —
- * the reply is a suggestion the desk accepts field by field.
- */
-const ThreadBodySchema = z.object({ thread: z.string().min(1) })
-
-quoteRoutes.post('/extract-customer', validateBody(ThreadBodySchema), async (req, res) => {
-  const { thread } = validated(ThreadBodySchema, req)
-  const result = await extractCustomerFromThread(thread)
-  if (!result.ok) {
-    res.json({ ok: false, reason: result.reason })
-    return
-  }
-  res.json({ ok: true, extracted: result.data.extracted, onFile: result.data.onFile })
 })
 
 /** Draft the covering email for a saved quotation. Drafts only; never sends. */

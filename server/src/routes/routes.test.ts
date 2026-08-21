@@ -25,7 +25,7 @@ describe('the API surface', () => {
     expect(routesOf(parseRoutes as never)).toEqual([
       'GET /capabilities',
       'POST /parse',
-      'POST /parse/llm',
+      'POST /parse/ai',
     ])
   })
 
@@ -38,7 +38,6 @@ describe('the API surface', () => {
       'GET /quotes',
       'GET /quotes/:id',
       'POST /draft-email',
-      'POST /extract-customer',
       'POST /price-history',
       'POST /quote',
       'POST /quotes/:id/status',

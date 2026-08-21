@@ -131,6 +131,14 @@ export const ParseResponseSchema = z.object({
   warnings: z.array(z.string()).default([]),
   /** Set when the LLM parse failed and we fell back to the pattern parser (§5). */
   note: z.string().optional(),
+  /**
+   * Term 4, when WE stated one in the thread. Computed on the server because
+   * only the server knows who wrote each line: read in the browser over the raw
+   * text, a customer's own "rates should be valid for 90 days" came back as our
+   * printed contractual term. Absent means the thread said nothing and the
+   * default — the end of the current month — stands.
+   */
+  suggestedValidity: z.string().optional(),
 })
 export type ParseResponse = z.infer<typeof ParseResponseSchema>
 
@@ -215,6 +223,59 @@ export const ExtractCustomerResponseSchema = z.object({
   /** Present when not ok — a sentence, never a stack. */
   reason: z.string().optional(),
 })
+
+/**
+ * The five customer fields a read can put on a draft.
+ *
+ * All five are present and all five are strings: a field the read could not
+ * determine is blank, and the blank is named in `customerMissing` rather than
+ * left out of the object for the client to guess about.
+ */
+export const ResolvedCustomerSchema = z.object({
+  name: z.string(),
+  address: z.string(),
+  attention: z.string(),
+  gstin: z.string(),
+  state: z.string(),
+})
+export type ResolvedCustomer = z.infer<typeof ResolvedCustomerSchema>
+
+/**
+ * What the one AI button answers with: the line items and the customer, read in
+ * a single pass and already resolved against the customer master, so the draft
+ * can be filled from it without a review panel in between.
+ *
+ * INVARIANT — `customer === null` means the customer READ FAILED. A read that
+ * SUCCEEDED but found nothing returns an all-blank customer with every label in
+ * `customerMissing`. Those are different situations and the UI must be able to
+ * tell them apart: the first is worth pressing again, the second is a thread
+ * that never named the customer and wants typing, not retrying.
+ *
+ * Either half may fail on its own without the other being affected, and neither
+ * failure is an error: the route always answers 200 with this shape.
+ */
+export const AiReadResponseSchema = ParseResponseSchema.extend({
+  customer: ResolvedCustomerSchema.nullable(),
+  customerConfidence: z.enum(['high', 'medium', 'low']),
+  /** Where the surviving values came from, not where they were looked for. */
+  customerFrom: z.enum(['thread', 'on-file', 'both']),
+  /** Human labels for the fields blank in BOTH the thread and the customer master. */
+  customerMissing: z.array(z.string()).default([]),
+  /**
+   * Labels for fields where the thread held a DIFFERENT non-empty value and
+   * lost to the customer master.
+   *
+   * `customerFrom` records where the winners came from but never what was
+   * overruled, so a customer who has moved office got last year's address on
+   * their proforma invoice and nobody was told. This is the channel that says
+   * so — and it is deliberately narrow: a disagreement is worth a sentence,
+   * "we used your customer list again" on every repeat quotation is not.
+   */
+  customerConflicts: z.array(z.string()).default([]),
+  /** Why the read failed, or why a value was dropped. Absent when there is nothing to say. */
+  customerNote: z.string().optional(),
+})
+export type AiReadResponse = z.infer<typeof AiReadResponseSchema>
 
 /** One row of the History table (§9 screen 5). */
 export const QuoteSummarySchema = z.object({

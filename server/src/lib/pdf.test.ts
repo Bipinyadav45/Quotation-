@@ -1,5 +1,7 @@
+import { closeSync, mkdirSync, openSync, rmSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { config } from '../config.js'
+import { ROOT, config } from '../config.js'
 import { converterStatus, docxToPdf, warmUp } from './pdf.js'
 import { renderDocx } from './docx.js'
 import type { Quote } from '@shared/schema.js'
@@ -89,4 +91,32 @@ describe('PDF converter', () => {
       expect(isPdf(pdf)).toBe(true)
     },
   )
+})
+
+describe('temp-directory cleanup', () => {
+  /**
+   * A conversion that has produced a PDF must not be turned into a failure by
+   * the deletion of its scratch directory.
+   *
+   * This is not hypothetical: on Windows the server crashed with EBUSY thrown
+   * out of convertOnce's `finally` while Word still held input.docx, and the
+   * same call runs at boot, so it took the process down on start too.
+   */
+  it('survives a scratch file that is still locked', async () => {
+    const { cleanTempDir } = await import('./pdf.js')
+    const tmpRoot = path.resolve(ROOT, '.tmp', 'pdf')
+
+    mkdirSync(path.join(tmpRoot, 'locked'), { recursive: true })
+    const held = path.join(tmpRoot, 'locked', 'input.docx')
+    writeFileSync(held, 'x')
+
+    // An open handle is what makes Windows refuse the unlink.
+    const handle = openSync(held, 'r')
+    try {
+      expect(() => cleanTempDir()).not.toThrow()
+    } finally {
+      closeSync(handle)
+      rmSync(path.join(tmpRoot, 'locked'), { recursive: true, force: true })
+    }
+  })
 })

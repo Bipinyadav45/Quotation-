@@ -1,7 +1,7 @@
 import { LlmParseResultSchema, type ParsedLine, type ParseResponse } from '@shared/schema.js'
 import { parseRupeesToPaise } from '@shared/money.js'
 import { askAi } from './ai.js'
-import { parseThreadDetailed } from './parser.js'
+import { looksLikeSpecification, parseThreadDetailed } from './parser.js'
 import { findMake } from './makes.js'
 
 /**
@@ -43,7 +43,13 @@ const OUTPUT_SCHEMA = {
         type: 'object',
         properties: {
           raw: { type: 'string', description: 'The source line, copied exactly.' },
-          desc: { type: 'string', description: 'The product, without quantity or price.' },
+          desc: {
+            type: 'string',
+            description:
+              'The product, without quantity or price. The product NAME on the first line, ' +
+              'the SPECIFICATION on the lines after it, separated by \\n. Name only if the ' +
+              'thread gives no specification.',
+          },
           make: { type: 'string', description: 'Brand if named, else an empty string.' },
           partCode: { type: 'string', description: 'Part or model code, else an empty string.' },
           qty: { type: 'integer', description: 'Quantity as a whole number, 0 if not stated.' },
@@ -75,7 +81,20 @@ A thread interleaves two sides:
 For each product line in the thread, return one entry:
 - role "request" for a customer line, "offer" for a reseller line
 - raw: the source line copied exactly
-- desc: the product only, with the quantity and price removed
+- desc: the product only, with the quantity and price removed. Write the product
+  NAME on the first line and the SPECIFICATION on the lines after it, joined by
+  \\n — the document prints the first line bold and underlined and the rest
+  plain beneath it. A specification usually sits on the line below the product
+  it belongs to, so these two source lines
+
+    HP 280 G9 MT ( MII ) - Rs. 83,000 + gst each
+    Core i5-14500, 8GB DDR5, 512GB SSD, Wi-Fi, Onboard, Win 11 Pro., 3 Years Warranty.
+
+  are one entry, whose rateText is "83,000" and whose desc is
+
+    HP 280 G9 MT ( MII )\\nCore i5-14500, 8GB DDR5, 512GB SSD, Wi-Fi, Onboard, Win 11 Pro., 3 Years Warranty.
+
+  A line that names a product and nothing else has no second line.
 - make: the brand if one is named, else ""
 - partCode: the part or model code if present, else ""
 - qty: the quantity as a whole number, 0 if not stated
@@ -84,6 +103,53 @@ For each product line in the thread, return one entry:
 Ignore greetings, signatures, disclaimers, phone lines and repeated quoted
 copies of a line you have already returned. Copy values; do not compute them,
 convert currencies, or tidy up spelling in "raw".`
+
+/**
+ * Move a specification onto its own line when the model left it on the first.
+ *
+ * The document prints the first line of a description bold and underlined and
+ * everything after it plain beneath a blank line, so a description that arrives
+ * as one line is printed entirely as a product name — the configuration the
+ * customer is buying set in the same weight as the model code. The prompt asks
+ * for the newline; this is what happens on the occasions it does not arrive.
+ *
+ * The signal is parser.ts's own, imported rather than restated: a second list
+ * would drift, and the same thread would then split one way through the
+ * patterns and another through the AI. The guards follow that function's
+ * instinct too — a boundary in the wrong place prints a mangled product name on
+ * a customer's quotation, which is worse than a specification the desk can move
+ * by hand.
+ */
+export function splitSingleLineDescription(desc: string): string {
+  // The model obeyed. It read the thread; this function has not.
+  if (desc.includes('\n')) return desc
+
+  const words = desc.split(/\s+/).filter((word) => word !== '')
+
+  // The word each specification signal starts at.
+  const signals: number[] = []
+  for (const [i, word] of words.entries()) {
+    const next = words[i + 1] ?? ''
+    // "16 GB" reads as a specification only as a pair, and the boundary
+    // belongs before the number rather than between it and its unit.
+    const paired = !looksLikeSpecification(next) && looksLikeSpecification(`${word} ${next}`.trim())
+    if (looksLikeSpecification(word) || paired) signals.push(i)
+  }
+
+  const at = signals[0]
+  // Nothing that reads as hardware: a name-only description, which is correct
+  // and common — a 1.5 mtr cable is the whole of that product.
+  if (at === undefined) return desc
+  // One signal is as likely to belong to the name as to start a specification:
+  // "HP ProBook 440 14 inch G11 Notebook PC" is a name, all of it.
+  if (signals.length < 2) return desc
+  // And one word is not a product name: "Numeric 1 kVA UPS" is one product.
+  if (at < 2) return desc
+
+  // Runs of whitespace collapse, as they do where parser.ts folds a
+  // specification into the product above it.
+  return `${words.slice(0, at).join(' ')}\n${words.slice(at).join(' ')}`
+}
 
 export async function parseThreadWithClaude(thread: string): Promise<ParseResponse> {
   const fallback = (note: string): ParseResponse => {
@@ -124,7 +190,9 @@ export async function parseThreadWithClaude(thread: string): Promise<ParseRespon
     lines.push({
       id: `llm-${index + 1}`,
       raw: line.raw,
-      desc: line.desc,
+      // The document splits this at the first newline, so a description that
+      // came back as one line is repaired before it can be printed as one.
+      desc: splitSingleLineDescription(line.desc),
       // The makes table is authoritative, so a brand the model invented does
       // not become a brand on the document. Fall back to the model only if we
       // have no entry for it.

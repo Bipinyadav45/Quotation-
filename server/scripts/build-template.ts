@@ -380,7 +380,11 @@ function buildBody(sectPr: string): string {
         h1,
         cp('To: ', { bold: true }) +
           cp('{customerName}', { bold: true }) +
-          cp('{customerAddress}'),
+          cp('{customerAddress}') +
+          // Label and value arrive as ONE string — see customerGstinLine in
+          // server/src/lib/docx.ts. A literal "GSTIN: " label here would print
+          // on every quotation whose customer has none.
+          cp('{customerGstinLine}'),
       ) +
         shaded(
           h2 + h3,
@@ -389,7 +393,11 @@ function buildBody(sectPr: string): string {
             // the on-screen preview cannot say different things.
             cp(COMPANY.name, { bold: true }) +
             // "6th Floor" — the letterhead raises that "th" too.
-            COMPANY.addressLines.map((line) => cp(line, { ordinals: true })).join(''),
+            COMPANY.addressLines.map((line) => cp(line, { ordinals: true })).join('') +
+            // A tag rather than COMPANY.gstin baked in like the name above,
+            // because the number is not known yet: filling it in then reaches
+            // the document without this binary being regenerated.
+            cp('{companyGstinLine}'),
           2,
         ),
       ROW_HEIGHT.headerTo,
@@ -487,11 +495,17 @@ function buildBody(sectPr: string): string {
     addressBlock,
     p(),
     p('Dear Sir,'),
-    p('Please find the following Quotation for your kind consideration: -'),
+    p('Please find the following Proforma Invoice for your kind consideration: -'),
     p(),
     // Heading5 => centred, bold, underlined. Those come from the style, not
     // from the paragraph.
-    p('Quotation ', { style: 'Heading5' }),
+    //
+    // The document is a Proforma Invoice, not a quotation. The reference series
+    // still reads NCS/<FY>/Quotes/<initials>/<seq> and the application is still
+    // called the Quotation Desk -- those are an identifier and a workplace name,
+    // and renaming either would break the numbering's continuity with every
+    // document already sent.
+    p('Proforma Invoice ', { style: 'Heading5' }),
     p(),
     itemsTable,
     p(),

@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Quote } from '@shared/schema.js'
+import { COMPANY, gstinLine } from '@shared/company.js'
 import { ROOT } from '../config.js'
 import { buildRenderModel, documentFilename, renderDocx } from './docx.js'
 
@@ -151,6 +152,25 @@ describe('buildRenderModel — §8, every value a string', () => {
       'NCS/2026-27/Quotes/RG/030 (Rev 1)',
     )
   })
+
+  it('builds each GSTIN as a whole printed line, label included', () => {
+    // The label cannot sit in the template beside a value tag: docxtemplater
+    // substitutes a plain string, so a customer with no GSTIN would be sent a
+    // document reading "GSTIN: " with nothing after it.
+    expect(gstinLine('29AABCM1234F1Z5')).toBe('GSTIN: 29AABCM1234F1Z5')
+    expect(gstinLine('')).toBe('')
+    expect(gstinLine('   ')).toBe('')
+    expect(gstinLine(undefined)).toBe('')
+
+    const withGstin = buildRenderModel({
+      ...QUOTE,
+      customer: { ...QUOTE.customer, gstin: '29AABCM1234F1Z5' },
+    })
+    expect(withGstin.customerGstinLine).toBe('GSTIN: 29AABCM1234F1Z5')
+    // The fixture carries none, and neither line may be filled in for it.
+    expect(model.customerGstinLine).toBe('')
+    expect(model.companyGstinLine).toBe(gstinLine(COMPANY.gstin))
+  })
 })
 
 describe('renderDocx — the golden file', () => {
@@ -173,6 +193,36 @@ describe('renderDocx — the golden file', () => {
     expect(text).toContain('Contact Number:022-40668809')
     expect(text).toContain('Email: rakhi.gupte@newtech.in')
     expect(text).toContain('Newtech Computer Services Pvt. Ltd.')
+  })
+
+  it('prints the customer GSTIN in the To cell', () => {
+    const withGstin = extractText(
+      renderDocx({ ...QUOTE, customer: { ...QUOTE.customer, gstin: '29AABCM1234F1Z5' } }),
+    )
+    expect(withGstin).toContain('GSTIN: 29AABCM1234F1Z5')
+    // In the To cell — which is everything ahead of the From cell beside it —
+    // and not loose somewhere further down the page.
+    expect(withGstin.indexOf('GSTIN: 29AABCM1234F1Z5')).toBeLessThan(withGstin.indexOf('From:'))
+  })
+
+  it('prints no GSTIN label at all when there is no GSTIN to print', () => {
+    // The regression that matters. A dangling "GSTIN: " on a document the
+    // customer files against their own return is worse than an absent line, so
+    // an unknown GSTIN prints as an empty paragraph and nothing else. The
+    // fixture carries none; Newtech's own is blank until someone supplies it,
+    // and the count follows it rather than pinning it at zero for ever.
+    expect(QUOTE.customer.gstin).toBeUndefined()
+    expect((text.match(/GSTIN/g) ?? []).length).toBe(COMPANY.gstin ? 1 : 0)
+  })
+
+  it('leaves the address block at three columns and the item table at five', () => {
+    // GSTIN yes, HSN no. Both new lines are paragraphs inside cells that
+    // already exist, so neither table may have gained a column.
+    const xml = new PizZip(rendered).file('word/document.xml')!.asText()
+    const columns = [...xml.matchAll(/<w:tblGrid>([\s\S]*?)<\/w:tblGrid>/g)].map(
+      (m) => (m[1]!.match(/<w:gridCol /g) ?? []).length,
+    )
+    expect(columns).toEqual([3, 5])
   })
 
   it('carries every line item, rate and amount', () => {
@@ -288,7 +338,6 @@ describe('against the quotation Newtech actually sent', () => {
       'Saki Vihar Road, Powai,',
       'rakhi.gupte@newtech.in',
       'Dear Sir,',
-      'Please find the following Quotation for your kind consideration: -',
       'Product Name and Description',
       'Black i USB-C to USB-A 1.5 mtr',
       'Black i USB-C to USB-C 1.5 mtr',
@@ -315,20 +364,53 @@ describe('against the quotation Newtech actually sent', () => {
     expect(missingFromOriginal, 'expected strings absent from the REFERENCE document').toEqual([])
     expect(missingFromOurs, 'expected strings absent from OUR rendered document').toEqual([])
   })
+
+  /**
+   * The document is a Proforma Invoice now and the reference file is a
+   * quotation, so two lines are SUPPOSED to differ.
+   *
+   * Asserted as pairs rather than deleted from the list above, because deleting
+   * them would mean a later accidental revert to "Quotation" passed silently —
+   * the one thing this test exists to catch.
+   */
+  it('says Proforma Invoice where the reference said Quotation, and only there', () => {
+    const original = extractText(readFileSync(SAMPLE_DOCX)).replace(/\s+/g, ' ')
+    const ours = extractText(renderDocx(QUOTE)).replace(/\s+/g, ' ')
+
+    const renamed = [
+      {
+        was: 'Please find the following Quotation for your kind consideration: -',
+        now: 'Please find the following Proforma Invoice for your kind consideration: -',
+      },
+      // The centred, bold, underlined heading.
+      { was: 'Quotation', now: 'Proforma Invoice' },
+    ]
+
+    for (const { was, now } of renamed) {
+      expect(original, `the reference document should still say "${was}"`).toContain(was)
+      expect(ours, `ours should say "${now}"`).toContain(now)
+    }
+
+    // The rename is confined to those two lines: nothing else in our document
+    // still calls itself a quotation.
+    expect(ours).not.toMatch(/\bQuotation\b/)
+    // ...and the reference series is untouched, because it is an identifier.
+    expect(ours).toContain('NCS/2026-27/Quotes/RG/030')
+  })
 })
 
 describe('documentFilename — §8', () => {
   it('uses the customer first word and the date', () => {
-    expect(documentFilename(QUOTE, 'docx')).toBe('Quotation-Morgan-2026-07-10.docx')
-    expect(documentFilename(QUOTE, 'pdf')).toBe('Quotation-Morgan-2026-07-10.pdf')
+    expect(documentFilename(QUOTE, 'docx')).toBe('ProformaInvoice-Morgan-2026-07-10.docx')
+    expect(documentFilename(QUOTE, 'pdf')).toBe('ProformaInvoice-Morgan-2026-07-10.pdf')
   })
 
   it('marks revisions and survives punctuation in the customer name', () => {
     expect(documentFilename({ ...QUOTE, revision: 2 }, 'docx')).toBe(
-      'Quotation-Morgan-2026-07-10-Rev2.docx',
+      'ProformaInvoice-Morgan-2026-07-10-Rev2.docx',
     )
     expect(
       documentFilename({ ...QUOTE, customer: { ...QUOTE.customer, name: 'L&T / Infotech' } }, 'docx'),
-    ).toBe('Quotation-LT-2026-07-10.docx')
+    ).toBe('ProformaInvoice-LT-2026-07-10.docx')
   })
 })

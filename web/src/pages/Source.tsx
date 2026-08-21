@@ -1,43 +1,89 @@
 import { useState } from 'react'
-import type { CustomerRecord, ExtractedCustomer, ParsedLine, ParseResponse } from '@shared/schema'
+import type { AiReadResponse, ParsedLine, ParseResponse, ResolvedCustomer } from '@shared/schema'
 import { SAMPLE_THREAD } from '@shared/sample'
 import { apiPost, useApi } from '../lib/api'
 import Callout from '../components/Callout'
 import ScreenHeader from '../components/ScreenHeader'
 
+/**
+ * What either reader hands back.
+ *
+ * The plain parser fills the line half and leaves the customer half undefined;
+ * the AI reader fills both in one pass. `customer: null` is NOT the same as
+ * undefined — it means the customer read was attempted and failed, which is
+ * worth saying out loud and worth pressing again. Undefined means nobody looked.
+ */
+export interface ReadResult {
+  lines: ParsedLine[]
+  skipped: string[]
+  warnings: string[]
+  /** Why the AI fell back to the plain parser, when it did. */
+  note?: string
+  customer?: ResolvedCustomer | null
+  customerConfidence?: 'high' | 'medium' | 'low'
+  customerFrom?: 'thread' | 'on-file' | 'both'
+  customerMissing?: string[]
+  /** Fields where the thread disagreed with the customer list and lost. */
+  customerConflicts?: string[]
+  customerNote?: string
+  /** Term 4, when WE stated one in the thread. Computed server-side. */
+  suggestedValidity?: string
+}
+
 interface Props {
   thread: string
   onThreadChange: (thread: string) => void
-  onParsed: (
-    lines: ParsedLine[],
-    thread: string,
-    skipped: string[],
-    warnings: string[],
-  ) => void
-  /** Customer details read from the thread, carried into the editor. */
-  onCustomerRead: (extracted: ExtractedCustomer, onFile: CustomerRecord | null) => void
+  onRead: (result: ReadResult, thread: string) => void
 }
 
 /** Screen 1 — the email thread goes in here and nowhere else. */
-export default function Source({ thread, onThreadChange, onParsed, onCustomerRead }: Props) {
-  const [busy, setBusy] = useState<'pattern' | 'llm' | 'customer' | null>(null)
+export default function Source({ thread, onThreadChange, onRead }: Props) {
+  const [busy, setBusy] = useState<'pattern' | 'ai' | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [note, setNote] = useState<string | null>(null)
 
-  // §5's Claude path needs a key. Without one the button is hidden rather than
-  // offered and then failing.
-  const capabilities = useApi<{ llm: boolean; extractCustomer: boolean }>('/api/capabilities')
+  // Without an API key the AI button is hidden rather than offered and then
+  // failing. The application stays completely usable without it.
+  const capabilities = useApi<{ llm: boolean; readWithAi: boolean }>('/api/capabilities')
 
-  async function parse(endpoint: '/api/parse' | '/api/parse/llm') {
-    setBusy(endpoint === '/api/parse' ? 'pattern' : 'llm')
+  async function read(mode: 'pattern' | 'ai') {
+    setBusy(mode)
     setError(null)
-    setNote(null)
     try {
-      const parsed = await apiPost<ParseResponse>(endpoint, { thread })
-      // §5 — a Claude failure comes back as the pattern result plus a note, not
-      // an error page. Carry the note through so the desk knows what happened.
-      if (parsed.note) setNote(parsed.note)
-      onParsed(parsed.lines, thread, parsed.skipped ?? [], parsed.warnings ?? [])
+      if (mode === 'pattern') {
+        const parsed = await apiPost<ParseResponse>('/api/parse', { thread })
+        onRead(
+          {
+            lines: parsed.lines,
+            skipped: parsed.skipped ?? [],
+            warnings: parsed.warnings ?? [],
+            suggestedValidity: parsed.suggestedValidity,
+          },
+          thread,
+        )
+        return
+      }
+
+      // One call now does what two buttons used to: the line items and the
+      // customer, read together and applied together. It answers 200 even when
+      // half of it failed, so there is nothing to catch here beyond the network
+      // itself — whatever worked comes back, and what did not says why.
+      const r = await apiPost<AiReadResponse>('/api/parse/ai', { thread })
+      onRead(
+        {
+          lines: r.lines,
+          skipped: r.skipped ?? [],
+          warnings: r.warnings ?? [],
+          note: r.note,
+          customer: r.customer,
+          customerConfidence: r.customerConfidence,
+          customerFrom: r.customerFrom,
+          customerMissing: r.customerMissing ?? [],
+          customerConflicts: r.customerConflicts ?? [],
+          customerNote: r.customerNote,
+          suggestedValidity: r.suggestedValidity,
+        },
+        thread,
+      )
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -71,10 +117,15 @@ export default function Source({ thread, onThreadChange, onParsed, onCustomerRea
         </Callout>
       )}
 
+      {/* readOnly while a read is in flight: the request is built from the text
+          as it was when the button was pressed, so an edit made while waiting
+          was silently reverted when the answer came back — taking whatever the
+          desk had just typed with it. */}
       <textarea
         value={thread}
         onChange={(e) => onThreadChange(e.target.value)}
         spellCheck={false}
+        readOnly={busy !== null}
         placeholder={
           'On Fri, Jul 10, 2026 at 5:52 PM rakhi gupte <rakhi.gupte@newtech.in> wrote:\n' +
           'Black i USB-C to USB-A 1.5 mtr, Qty- 02 - Rs. 550 + gst each\n' +
@@ -91,50 +142,25 @@ export default function Source({ thread, onThreadChange, onParsed, onCustomerRea
         <button
           type="button"
           className="btn btn-primary"
-          onClick={() => parse('/api/parse')}
+          onClick={() => read('pattern')}
           disabled={busy !== null || empty}
         >
           {busy === 'pattern' ? 'Reading the thread…' : 'Read the thread'}
         </button>
 
-        {capabilities.data?.llm && (
+        {/* One button, not two. It used to take a separate press to read the
+            customer, and the details then had to be accepted field by field
+            before anything happened — so the common case was three actions to
+            get one quotation started. */}
+        {capabilities.data?.readWithAi && (
           <button
             type="button"
             className="btn"
-            onClick={() => parse('/api/parse/llm')}
+            onClick={() => read('ai')}
             disabled={busy !== null || empty}
-            title="Slower, and costs a little. Worth it when the ordinary reader misses lines."
+            title="Slower, and costs a little. Reads the line items AND fills in the customer's name, address, GSTIN and ship-to state. Worth it when the ordinary reader misses lines."
           >
-            {busy === 'llm' ? 'Reading with AI…' : 'Read it with AI instead'}
-          </button>
-        )}
-
-        {capabilities.data?.extractCustomer && (
-          <button
-            type="button"
-            className="btn"
-            onClick={async () => {
-              setBusy('customer')
-              setError(null)
-              try {
-                const r = await apiPost<{
-                  ok: boolean
-                  extracted?: ExtractedCustomer
-                  onFile?: CustomerRecord | null
-                  reason?: string
-                }>('/api/extract-customer', { thread })
-                if (!r.ok || !r.extracted) setError(r.reason ?? 'Could not read the customer.')
-                else onCustomerRead(r.extracted, r.onFile ?? null)
-              } catch (err) {
-                setError((err as Error).message)
-              } finally {
-                setBusy(null)
-              }
-            }}
-            disabled={busy !== null || empty}
-            title="Reads the customer's name, address, GSTIN and contact out of the thread"
-          >
-            {busy === 'customer' ? 'Reading…' : 'Read customer details'}
+            {busy === 'ai' ? 'Reading with AI…' : 'Read it with AI instead'}
           </button>
         )}
 
@@ -155,7 +181,6 @@ export default function Source({ thread, onThreadChange, onParsed, onCustomerRea
           onClick={() => {
             onThreadChange('')
             setError(null)
-            setNote(null)
           }}
           disabled={busy !== null || empty}
         >
@@ -163,18 +188,16 @@ export default function Source({ thread, onThreadChange, onParsed, onCustomerRea
         </button>
       </div>
 
-      {capabilities.data?.llm && !empty && (
+      {capabilities.data?.readWithAi && !empty && (
         <p className="mt-2 text-[12px] text-ink-muted">
-          Start with <span className="font-medium">Read the thread</span>. Only reach for the AI if
-          lines are missing or landed on the wrong side.
+          Start with <span className="font-medium">Read the thread</span>. Reach for the AI if lines
+          are missing, if they landed on the wrong side, or to have the customer filled in for you.
         </p>
       )}
 
-      {note && (
-        <Callout tone="drift" label="Note" className="mt-3">
-          {note}
-        </Callout>
-      )}
+      {/* Anything either reader wants to say about what it did lands on the next
+          screen beside the quotation it affected, not here — this screen is gone
+          the moment the thread has been read. */}
       {error && (
         <Callout tone="problem" label="Problem" className="mt-3">
           {error}

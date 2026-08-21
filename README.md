@@ -46,13 +46,18 @@ npm start                 # http://localhost:4000
 |---|---|---|
 | **Customer master** — the second quotation to a customer fills itself | no | free |
 | **Price memory** — what you last charged, under each Rate cell | no | free |
-| **Read it with AI** — for threads the patterns cannot read | yes | ~₹0.2 |
-| **Read customer details** — name, address, GSTIN out of the thread | yes | ~₹1.5 |
-| **Draft covering email** — the note that goes with the quotation | yes | ~₹0.4 |
+| **Read it with AI** — the lines *and* the customer, in one pass | yes | ~₹1.7 |
+| **Draft covering email** — the note that goes with the document | yes | ~₹0.4 |
 
 The first two are the ones that save the most typing, and they cost nothing —
-they read your own records. With no `GEMINI_API_KEY` the other three are not
+they read your own records. With no `GEMINI_API_KEY` the other two are not
 shown at all and everything else works exactly as before.
+
+"Read it with AI" used to be two buttons — one for the lines, one for the
+customer — and the customer's details then had to be accepted field by field
+before anything happened. One press now does both and fills the draft in
+directly. Where it had to infer something, or found nothing, it says so on the
+next screen instead of asking you to read a panel.
 
 The model is Google Gemini, called over plain `fetch` from
 [server/src/lib/ai.ts](server/src/lib/ai.ts) — one module, never throws, and the

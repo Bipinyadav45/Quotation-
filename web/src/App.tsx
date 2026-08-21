@@ -1,11 +1,11 @@
 import { useState } from 'react'
-import type { CustomerRecord, ExtractedCustomer, ParsedLine, Quote, QuoteItem } from '@shared/schema'
+import type { Quote, QuoteItem, ResolvedCustomer } from '@shared/schema'
 import { itemsFromLines } from './lib/draft'
 import { DEFAULT_SALESPERSON, DEFAULT_TERMS, GST_RATE_PERCENT } from '@shared/company'
 import { endOfMonth, formatDateLong, toISODate } from '@shared/fy'
 import { formatPaise } from '@shared/money'
 import { taxModeForState } from '@shared/states'
-import Source from './pages/Source'
+import Source, { type ReadResult } from './pages/Source'
 import QuoteEditor, { type EditorItem, type QuoteDraft } from './pages/QuoteEditor'
 import Stepper from './components/Stepper'
 import History from './pages/History'
@@ -37,18 +37,41 @@ const toEditorItem = (item: QuoteItem): EditorItem => ({
   rateText: formatPaise(item.rate),
 })
 
-function newDraft(items: QuoteItem[]): QuoteDraft {
+/**
+ * A draft is now born with its customer already in it, rather than blank with
+ * the details offered for acceptance afterwards.
+ *
+ * The ship-to state has to travel with the customer, not after them: it decides
+ * whether the document shows one IGST row or a CGST/SGST pair, so a customer
+ * applied without their state would quote the wrong tax split until someone
+ * noticed.
+ */
+function newDraft(
+  items: QuoteItem[],
+  customer?: ResolvedCustomer | null,
+  validity?: string | null,
+): QuoteDraft {
   const today = new Date()
+  const filled = customer ?? { name: '', address: '', attention: '', gstin: '', state: '' }
+
   return {
     date: toISODate(today),
     initials: DEFAULT_SALESPERSON.initials,
-    customer: { name: '', address: '', attention: '', gstin: '', state: '' },
+    customer: filled,
     contact: DEFAULT_SALESPERSON.phone,
     email: DEFAULT_SALESPERSON.email,
     signatory: DEFAULT_SALESPERSON.name,
     items: items.map(toEditorItem),
-    tax: { mode: taxModeForState(undefined), rate: GST_RATE_PERCENT },
-    terms: { ...DEFAULT_TERMS, validity: formatDateLong(endOfMonth(today)) },
+    tax: { mode: taxModeForState(filled.state || undefined), rate: GST_RATE_PERCENT },
+    terms: {
+      ...DEFAULT_TERMS,
+      // What WE told this customer in the thread beats the end of the month.
+      // The server works it out, because only the server knows who wrote which
+      // line — read over the raw text, the customer's own "valid for 90 days"
+      // came back as our contractual term. Absent means nobody said, and the
+      // default stands.
+      validity: validity ?? formatDateLong(endOfMonth(today)),
+    },
   }
 }
 
@@ -74,22 +97,99 @@ function draftFromQuote(quote: Quote, asRevision: boolean): QuoteDraft {
   }
 }
 
+/**
+ * What the review panel used to say by showing you every value beside the one
+ * on file, now that nothing is shown and the details go straight in.
+ *
+ * It warns at MEDIUM as well as low. The panel could afford to stay quiet at
+ * medium because it printed each value for inspection; nothing is printed now,
+ * and the extractor's own prompt defines medium as "you had to infer" — an
+ * inferred address must not reach a tax document unannounced.
+ */
+function customerWarnings(result: ReadResult): string[] {
+  // undefined means nobody looked: the plain parser reads lines, not customers.
+  if (result.customer === undefined) return []
+
+  if (result.customer === null) {
+    return [
+      result.customerNote ??
+        'The customer could not be read from this thread. Type the details in below.',
+    ]
+  }
+
+  const out: string[] = []
+  const applied = Object.values(result.customer).some((value) => value !== '')
+
+  // Only worth saying if something was actually filled in. A read that came
+  // back empty — the internal-domain guard wiping our own details, say — needs
+  // "nothing was filled in", not "check what was".
+  if (applied && (result.customerConfidence === 'low' || result.customerConfidence === 'medium')) {
+    out.push(
+      `The customer details were ${result.customerConfidence === 'low' ? 'a guess' : 'partly inferred'}` +
+        ' rather than read plainly, and they have been filled in below. Check the name, address' +
+        ' and ship-to state before saving — the state decides the tax split.',
+    )
+  }
+
+  if (!applied) {
+    out.push(
+      'No customer details could be taken from this thread, so none were filled in.' +
+        ' Type them in below.',
+    )
+  }
+
+  // 'both' is the ordinary repeat-customer case and says nothing worth reading;
+  // warning on it would fire on nearly every quotation and train the desk to
+  // scroll past the whole strip. What matters is the two cases where the
+  // thread's own words did NOT survive.
+  if (applied && result.customerFrom === 'on-file') {
+    out.push(
+      'This thread named no customer, so the details came from your customer list.' +
+        ' Check they are still the right ones to quote.',
+    )
+  }
+
+  const conflicts = result.customerConflicts ?? []
+  if (conflicts.length > 0) {
+    out.push(
+      `The thread gives a different ${conflicts.join(', ')} from your customer list.` +
+        ' What is on file was used, being the version someone confirmed by saving it —' +
+        ' change it below if they have moved.',
+    )
+  }
+
+  if (result.customerMissing && result.customerMissing.length > 0) {
+    out.push(
+      `Not in the thread and not on file: ${result.customerMissing.join(', ')}.` +
+        ' Left blank rather than guessed.',
+    )
+  }
+
+  if (result.customerNote) out.push(result.customerNote)
+
+  return out
+}
+
 export default function App() {
   const [screen, setScreen] = useState<Screen>('source')
   const [thread, setThread] = useState('')
   const [draft, setDraft] = useState<QuoteDraft | null>(null)
   const [saved, setSaved] = useState<Quote | null>(null)
+  /**
+   * The customer the AI last resolved, kept so a second read does not wipe it.
+   *
+   * "Read the thread" looks at line items and forms no opinion about the
+   * customer, so it must not overwrite one — and with the review panel gone
+   * there is no longer anywhere to get it back from short of pressing the AI
+   * button again.
+   */
+  const [lastCustomer, setLastCustomer] = useState<ResolvedCustomer | null>(null)
   /** The exact thread text the current comparison was built from. */
   const [parsedThread, setParsedThread] = useState('')
   /** Lines the parser could not read as products — shown, never dropped. */
   const [skipped, setSkipped] = useState<string[]>([])
   /** Judgements the parser cannot make for the desk — e.g. a superseded price. */
   const [warnings, setWarnings] = useState<string[]>([])
-  /** Customer details Claude read, offered on the quotation screen. */
-  const [readCustomer, setReadCustomer] = useState<{
-    extracted: ExtractedCustomer
-    onFile: CustomerRecord | null
-  } | null>(null)
 
   /**
    * The stepper lets you jump back to the thread, edit it, and jump forward
@@ -111,9 +211,9 @@ export default function App() {
 
   function startNew() {
     setThread('')
+    setLastCustomer(null)
     setSkipped([])
     setWarnings([])
-    setReadCustomer(null)
     setDraft(null)
     setSaved(null)
     setScreen('source')
@@ -175,14 +275,18 @@ export default function App() {
           <Source
             thread={thread}
             onThreadChange={setThread}
-            onCustomerRead={(extracted, onFile) => setReadCustomer({ extracted, onFile })}
-            onParsed={(nextLines, usedThread, notRead, notes) => {
+            onRead={(result, usedThread) => {
               setThread(usedThread)
               setParsedThread(usedThread)
-              const { items, setAside, assumedQty } = itemsFromLines(nextLines)
-              setSkipped([...notRead, ...setAside])
+
+              const { items, setAside, assumedQty, warnings: carryWarnings } =
+                itemsFromLines(result.lines)
+              setSkipped([...result.skipped, ...setAside])
+
               setWarnings([
-                ...notes,
+                // Why the AI reader fell back to the plain one, when it did.
+                ...(result.note ? [result.note] : []),
+                ...result.warnings,
                 // Never let an invented number reach a customer unannounced.
                 ...(assumedQty > 0
                   ? [
@@ -191,14 +295,31 @@ export default function App() {
                         `${assumedQty === 1 ? 'it' : 'them'} against what the customer asked for before saving.`,
                     ]
                   : []),
+                // The same rule line by line: a quantity fetched off the customer's own
+                // request, and one refused for naming a different variant, are both
+                // changes to what was quoted and neither may go out unsaid.
+                ...carryWarnings,
+                // Term 4 is a commitment about how long the price holds. Taken
+                // off the thread it is only as good as the sentence it came
+                // from, so it never lands silently — the same rule the carried
+                // quantity follows.
+                ...(result.suggestedValidity
+                  ? [
+                      `Validity has been set to "${result.suggestedValidity}", read from what we` +
+                        ' told this customer in the thread. Check it against what you mean to' +
+                        ' commit to before saving.',
+                    ]
+                  : []),
+                ...customerWarnings(result),
               ])
-              setDraft(newDraft(items))
+
+              if (result.customer) setLastCustomer(result.customer)
+              setDraft(newDraft(items, result.customer ?? lastCustomer, result.suggestedValidity))
               setSaved(null)
               setScreen('editor')
             }}
           />
         )}
-
 
         {screen === 'editor' && draft && (
           <QuoteEditor
@@ -208,8 +329,6 @@ export default function App() {
             skipped={skipped}
             warnings={warnings}
             stale={draftStale}
-            readCustomer={readCustomer}
-            onDismissReadCustomer={() => setReadCustomer(null)}
             saved={saved}
             onSaved={setSaved}
             onRevise={() => {

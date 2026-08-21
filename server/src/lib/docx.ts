@@ -5,6 +5,7 @@ import type { Quote } from '@shared/schema.js'
 import { computeTotals, formatPaise, pad2 } from '@shared/money.js'
 import { formatDateParts, fromISODate } from '@shared/fy.js'
 import { splitDescription } from '@shared/description.js'
+import { COMPANY, gstinLine } from '@shared/company.js'
 import { config } from '../config.js'
 
 /**
@@ -30,6 +31,19 @@ export interface RenderModel {
   dateRest: string
   customerName: string
   customerAddress: string
+  /**
+   * The two GSTIN lines of the address block, as they are PRINTED: either
+   * "GSTIN: 29AABCM1234F1Z5" or the empty string.
+   *
+   * Whole lines, not values, because docxtemplater substitutes a plain string
+   * and nothing else — a literal "GSTIN: " label in the template beside a value
+   * tag would print the label with nothing after it on every quotation whose
+   * customer has no GSTIN. An empty line renders as an empty paragraph, which
+   * is the correct degradation for a field we do not know.
+   */
+  customerGstinLine: string
+  /** Empty until COMPANY.gstin is filled in — see shared/company.ts. */
+  companyGstinLine: string
   attention: string
   contact: string
   email: string
@@ -67,6 +81,8 @@ export function buildRenderModel(quote: Quote): RenderModel {
     })(),
     customerName: quote.customer.name,
     customerAddress: quote.customer.address,
+    customerGstinLine: gstinLine(quote.customer.gstin),
+    companyGstinLine: gstinLine(COMPANY.gstin),
     attention: quote.customer.attention,
     contact: quote.contact,
     email: quote.email,
@@ -109,10 +125,10 @@ export function renderDocx(quote: Quote): Buffer {
   return doc.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' })
 }
 
-/** §8 — `Quotation-<CustomerFirstWord>-<date>.docx` */
+/** §8 — `ProformaInvoice-<CustomerFirstWord>-<date>.docx`, named for what the document is. */
 export function documentFilename(quote: Quote, extension: 'docx' | 'pdf'): string {
   const firstWord = quote.customer.name.trim().split(/\s+/)[0] ?? 'Customer'
   const safe = firstWord.replace(/[^A-Za-z0-9]/g, '')
   const rev = quote.revision > 0 ? `-Rev${quote.revision}` : ''
-  return `Quotation-${safe || 'Customer'}-${quote.date}${rev}.${extension}`
+  return `ProformaInvoice-${safe || 'Customer'}-${quote.date}${rev}.${extension}`
 }
