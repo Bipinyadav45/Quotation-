@@ -65,13 +65,19 @@ const TERMS_INDENT_LEFT = 1254 // 55.5pt + the 0.1" internal inset
 const TERMS_INDENT_RIGHT = PAGE_WIDTH - TERMS_INDENT_LEFT - 9975 // 498.75pt wide
 
 /**
- * The address block is THREE columns, not two: 5098 + 142 + 4394 = 9634.
+ * The address block: two columns, 5098 + 4536 = 9634.
  *
- * The 142-twip middle column is a spacer, and it is there because the rows
- * split at different points — To/From at 5098, Contact/Email at 5240. Two
- * columns cannot express that; three can, with each row spanning what it needs.
+ * THE ORIGINAL HAS THREE, and this is the one place the layout departs from it
+ * deliberately. Its rows split at DIFFERENT points — To/From at 5098,
+ * Contact/Email at 5240 — with a 142-twip spacer column in between to allow it.
+ * Reproduced faithfully, that prints the vertical rule under "From:" 7pt to the
+ * left of the rule under "Email:", and two rules that nearly line up read as a
+ * mistake rather than as a choice. The desk asked for them joined.
+ *
+ * 5098 rather than 5240 because that is where the To/From rule sits, and that
+ * row is the one the eye goes to.
  */
-const HEADER_COLS = [5098, 142, 4394]
+const HEADER_COLS = [5098, 4536]
 
 /** The item table: five columns totalling 9776. */
 const ITEM_COLS = [562, 5529, 1417, 709, 1559]
@@ -362,7 +368,7 @@ function tbl(cols: number[], rows: string[], opts: { borders?: boolean } = {}): 
 // --- the document body -----------------------------------------------------
 
 function buildBody(sectPr: string): string {
-  const [h1, h2, h3] = HEADER_COLS as [number, number, number]
+  const [h1, h2] = HEADER_COLS as [number, number]
   const [sr, desc, rate, qty, amount] = ITEM_COLS as [number, number, number, number, number]
 
   // Ref and Date are two paragraphs in one cell spanning all three columns.
@@ -379,7 +385,7 @@ function buildBody(sectPr: string): string {
       // The style also sets 11pt, which the document overrides back to 12pt on
       // the run, and so does p().
       shaded(
-        h1 + h2 + h3,
+        h1 + h2,
         cp('Ref: {ref}', { style: 'Heading4' }) +
           // Three tags, not one: the ordinal is raised, and Word can only raise
           // a whole run. shared/fy.ts hands the date over pre-split for exactly
@@ -390,7 +396,7 @@ function buildBody(sectPr: string): string {
           runs('{dateOrd}', { bold: true, superscript: true }) +
           runs('{dateRest}', { bold: true }) +
           `</w:p>`,
-        3,
+        2,
       ),
       ROW_HEIGHT.headerRef,
     ),
@@ -416,7 +422,7 @@ function buildBody(sectPr: string): string {
           gstinLine('customerGstinLine'),
       ) +
         shaded(
-          h2 + h3,
+          h2,
           cp('From: ', { bold: true }) +
             // From COMPANY, not typed out here, so the letterhead block and
             // the on-screen preview cannot say different things.
@@ -430,16 +436,16 @@ function buildBody(sectPr: string): string {
             // COMPANY.gstin is blank today, so EVERY document was carrying the
             // empty line.
             gstinLine('companyGstinLine'),
-          2,
         ),
       ROW_HEIGHT.headerTo,
     ),
     tr(
-      shaded(h1 + h2, cp('Contact Number:{contact}'), 2) + shaded(h3, cp('Email: {email}')),
+      // Both rules on the same column now, which is the whole point.
+      shaded(h1, cp('Contact Number:{contact}')) + shaded(h2, cp('Email: {email}')),
       ROW_HEIGHT.headerContact,
     ),
     tr(
-      shaded(h1 + h2 + h3, cp('Kind Attention: {attention}', { bold: true, align: 'center' }), 3),
+      shaded(h1 + h2, cp('Kind Attention: {attention}', { bold: true, align: 'center' }), 2),
       ROW_HEIGHT.headerAttention,
     ),
   ])

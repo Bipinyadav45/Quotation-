@@ -291,14 +291,39 @@ describe('renderDocx — the golden file', () => {
     expect(some.slice(3)).toEqual(none.slice(3))
   })
 
-  it('leaves the address block at three columns and the item table at five', () => {
-    // GSTIN yes, HSN no. Both new lines are paragraphs inside cells that
+  it('leaves the address block at two columns and the item table at five', () => {
+    // GSTIN yes, HSN no. Both GSTIN lines are paragraphs inside cells that
     // already exist, so neither table may have gained a column.
     const xml = new PizZip(rendered).file('word/document.xml')!.asText()
     const columns = [...xml.matchAll(/<w:tblGrid>([\s\S]*?)<\/w:tblGrid>/g)].map(
       (m) => (m[1]!.match(/<w:gridCol /g) ?? []).length,
     )
-    expect(columns).toEqual([3, 5])
+    expect(columns).toEqual([2, 5])
+  })
+
+  it('draws one vertical rule down the address block, not two near-misses', () => {
+    // The original splits To/From at 5098 and Contact/Email at 5240, with a
+    // 142-twip spacer column to allow it — so the rule under "From:" printed
+    // 7pt to the left of the rule under "Email:". Two rules that nearly line up
+    // read as a mistake rather than as a choice, and the desk asked for them
+    // joined. Every row must therefore break at the same column.
+    const xml = new PizZip(rendered).file('word/document.xml')!.asText()
+    const table = xml.slice(xml.indexOf('<w:tbl>'), xml.indexOf('</w:tbl>'))
+
+    const breaks = table
+      .split('<w:tr>')
+      .slice(1)
+      .map((row) => {
+        // Where each row's cells end, cumulatively. A row spanning the whole
+        // width has one boundary and constrains nothing.
+        let x = 0
+        const edges = [...row.matchAll(/<w:tcW w:w="(\d+)"/g)].map((m) => (x += Number(m[1])))
+        return edges.slice(0, -1)
+      })
+      .filter((edges) => edges.length > 0)
+
+    expect(breaks.length, 'no row splits the address block any more').toBeGreaterThan(1)
+    expect(new Set(breaks.flat()).size, 'the address block breaks at more than one column').toBe(1)
   })
 
   it('carries every line item, rate and amount', () => {
