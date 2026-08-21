@@ -47,6 +47,48 @@ export function allocateRef(
   return { ref: formatRef(fy, who, row.last_seq), fy, initials: who, seq: row.last_seq }
 }
 
+/**
+ * Take the number the desk chose instead of the next one in the series.
+ *
+ * "If the current document is 042 and I edited and change the doc to 045, then
+ * the next doc which I create should start from 046" — so the counter is
+ * dragged up to the chosen number in the same breath as the number is used.
+ *
+ * max(last_seq, excluded.last_seq) is what makes that a drag and never a reset.
+ * A number BELOW the counter — filling a gap left by a deleted quotation — must
+ * leave the counter where it is, or the next ordinary save hands out a
+ * reference some existing document is already carrying.
+ *
+ * One statement, for the reason allocateRef is one statement: a read-then-write
+ * would open a window in which a concurrent save takes the number this one is
+ * about to claim.
+ *
+ * The reference returned is the number ASKED FOR, which is not always where the
+ * counter ends up — claiming 010 while the counter sits at 045 gives .../010
+ * and leaves the counter at 045.
+ */
+export function claimRef(
+  db: BetterSqlite3.Database,
+  date: Date,
+  initials: string,
+  seq: number,
+): AllocatedRef {
+  const fy = financialYear(date)
+  const who = initials.trim().toUpperCase()
+  if (who === '') throw new Error('Cannot allocate a reference without the salesperson’s initials')
+  if (!Number.isInteger(seq) || seq < 1) {
+    throw new Error(`A reference number must be a whole number from 1 upwards, not ${seq}`)
+  }
+
+  db.prepare(
+    `INSERT INTO ref_counters (fy, initials, last_seq)
+     VALUES (?, ?, ?)
+     ON CONFLICT (fy, initials) DO UPDATE SET last_seq = max(last_seq, excluded.last_seq)`,
+  ).run(fy, who, seq)
+
+  return { ref: formatRef(fy, who, seq), fy, initials: who, seq }
+}
+
 /** Read the next number without taking it — for showing a preview only. */
 export function peekNextSeq(db: BetterSqlite3.Database, date: Date, initials: string): number {
   const row = db

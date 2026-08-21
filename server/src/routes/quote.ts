@@ -10,7 +10,7 @@ import { computeTotals } from '@shared/money.js'
 import { fromISODate } from '@shared/fy.js'
 import { validateBody, validated } from '../middleware/validate.js'
 import { getDb } from '../db/client.js'
-import { allocateRef, peekNextSeq } from '../lib/refno.js'
+import { allocateRef, claimRef, peekNextSeq } from '../lib/refno.js'
 import { loadMakes } from '../lib/makes.js'
 import { rememberCustomer, searchCustomers } from '../lib/customers.js'
 import { findPastPrices } from '../lib/priceHistory.js'
@@ -99,6 +99,11 @@ quoteRoutes.post('/quote', validateBody(SaveQuoteRequestSchema), (req, res) => {
   // they were is irrelevant — this is the number that reaches the document.
   const totals = computeTotals(input.items, input.tax.mode, input.tax.rate)
 
+  // The reference this save is attempting, kept outside the transaction because
+  // that is the only thing that survives a rollback — and on a clash it is
+  // exactly what the desk needs told back to them.
+  let attempted = { ref: '', revision: 0 }
+
   const save = db.transaction((): Quote => {
     let ref: string
     let revision = 0
@@ -116,11 +121,19 @@ quoteRoutes.post('/quote', validateBody(SaveQuoteRequestSchema), (req, res) => {
 
       ref = parent.ref
       revision = (highest.r ?? 0) + 1
+      // input.seqOverride is deliberately not consulted: a revision carries its
+      // parent's reference, so there is no number here for the desk to choose.
+    } else if (input.seqOverride !== undefined) {
+      // The desk typed a number. It is used as typed, and the counter is carried
+      // up to it so the next quotation continues past it (§7 still owns the
+      // series; this only tells it where the series has got to).
+      ref = claimRef(db, fromISODate(input.date), input.initials, input.seqOverride).ref
     } else {
       // §7 — allocated on save, never on page load.
       ref = allocateRef(db, fromISODate(input.date), input.initials).ref
     }
 
+    attempted = { ref, revision }
     const id = randomUUID()
 
     db.prepare(
@@ -221,8 +234,47 @@ quoteRoutes.post('/quote', validateBody(SaveQuoteRequestSchema), (req, res) => {
     }
   })
 
-  res.status(201).json(save())
+  try {
+    res.status(201).json(save())
+  } catch (err) {
+    if (!isRefTaken(err)) throw err
+
+    /**
+     * 409, not 400 and not 500.
+     *
+     * The body was valid — 045 is a perfectly well-formed number to ask for, so
+     * nothing the request schema could have caught went wrong; it lost a race
+     * with the state of the database, which is what 409 is for. And it is not a
+     * 500: nothing is broken, the desk simply picked a number that is taken and
+     * can pick another. The raw "UNIQUE constraint failed: quotes.ref,
+     * quotes.revision" tells them none of that.
+     */
+    const taken =
+      attempted.revision > 0 ? `${attempted.ref} Rev ${attempted.revision}` : attempted.ref
+    res.status(409).json({
+      error: `Reference ${taken} is already in use — choose a different number.`,
+      ref: attempted.ref,
+      revision: attempted.revision,
+    })
+  }
 })
+
+/**
+ * The raw SQLite error behind idx_quotes_ref_revision, and only that one.
+ *
+ * Matched on the index's own columns rather than on SQLITE_CONSTRAINT_UNIQUE
+ * alone, because the customer master's unique name index sits inside this same
+ * transaction. A clash there would be a bug in our code, and it must keep
+ * reaching the error handler as a 500 instead of being dressed up as a number
+ * the desk can retype.
+ */
+function isRefTaken(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err as { code?: string }).code === 'SQLITE_CONSTRAINT_UNIQUE' &&
+    err.message.includes('quotes.ref')
+  )
+}
 
 /** Draft the covering email for a saved quotation. Drafts only; never sends. */
 const DraftEmailBodySchema = z.object({ quoteId: z.string().min(1) })

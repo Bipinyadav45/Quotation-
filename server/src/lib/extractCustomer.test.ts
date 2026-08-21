@@ -375,6 +375,92 @@ describe('resolveCustomer says what it overruled', () => {
   })
 })
 
+describe('resolveCustomer repairs a stored address that lost its line breaks', () => {
+  /**
+   * The real record. Two lines were saved into one at some point in the past —
+   * "Sec 44Gurugram", no separator at all — and on-file precedence then printed
+   * it that way on every quotation for that customer, each save handing the
+   * broken value straight back.
+   */
+  const RUN_TOGETHER = 'Plot 66, Sec 44Gurugram, Haryana - 122001'
+  const WITH_BREAK = 'Plot 66, Sec 44\nGurugram, Haryana - 122001'
+
+  it('takes the fresh read when the stored copy is the same address flattened', () => {
+    const { customer } = resolveCustomer(
+      read({ name: 'Zensar', address: WITH_BREAK }),
+      file({ name: 'Zensar', address: RUN_TOGETHER }),
+    )
+
+    expect(customer.address).toBe(WITH_BREAK)
+  })
+
+  it('does not call the repair a disagreement between the thread and the file', () => {
+    // Same address, better structure. Marking Address as a conflict would send
+    // the desk off to compare two addresses that match, which is the noise the
+    // conflict channel exists to avoid.
+    const { customerConflicts, customerNote } = resolveCustomer(
+      read({ name: 'Zensar', address: WITH_BREAK }),
+      file({ name: 'Zensar', address: RUN_TOGETHER }),
+    )
+
+    expect(customerConflicts).toEqual([])
+    expect(customerNote).not.toMatch(/different/i)
+    // ...but it is not silent either. The record on the customer list is still
+    // broken and nobody has that list open while a quotation is being made.
+    expect(customerNote).toMatch(/line breaks/i)
+    expect(customerNote).toMatch(/customer list/i)
+  })
+
+  it('leaves two genuinely different addresses to the ordinary precedence', () => {
+    // They share most of their text and one has more lines, which is exactly
+    // the shape the repair looks for. They are still different addresses, so
+    // the file wins and the desk is told the thread disagreed.
+    const { customer, customerConflicts } = resolveCustomer(
+      read({ name: 'Zensar', address: 'Plot 66, Sec 44\nGurugram, Haryana - 122018' }),
+      file({ name: 'Zensar', address: RUN_TOGETHER }),
+    )
+
+    expect(customer.address).toBe(RUN_TOGETHER)
+    expect(customerConflicts).toEqual(['Address'])
+  })
+
+  it('never lets a stored address that has its breaks lose to a flattened read', () => {
+    // The mirror image of the repair, and the direction that would DESTROY
+    // structure rather than restore it. Sameness alone must not be enough.
+    const { customer, customerNote } = resolveCustomer(
+      read({ name: 'Zensar', address: RUN_TOGETHER }),
+      file({ name: 'Zensar', address: WITH_BREAK }),
+    )
+
+    expect(customer.address).toBe(WITH_BREAK)
+    expect(customerNote).not.toMatch(/line breaks/i)
+  })
+
+  it('counts printed lines, so padding round the same shape is not an improvement', () => {
+    // Blank lines are spacing, not structure. Two lines either side, so the
+    // stored copy keeps its precedence.
+    const { customer } = resolveCustomer(
+      read({ name: 'Zensar', address: '\n\nPlot 66, Sec 44\n\n\nGurugram, Haryana - 122001\n' }),
+      file({ name: 'Zensar', address: WITH_BREAK }),
+    )
+
+    expect(customer.address).toBe(WITH_BREAK)
+  })
+
+  it('leaves the other fields on their usual precedence while it repairs', () => {
+    // The repair is one field wide. A stored GSTIN is still the confirmed one.
+    const { customer, customerConflicts, customerFrom } = resolveCustomer(
+      read({ name: 'Zensar', address: WITH_BREAK, gstin: '27AABCU9603R1ZM' }),
+      file({ name: 'Zensar', address: RUN_TOGETHER, gstin: '27AAACD1234E1Z5' }),
+    )
+
+    expect(customer.address).toBe(WITH_BREAK)
+    expect(customer.gstin).toBe('27AAACD1234E1Z5')
+    expect(customerConflicts).toEqual(['GSTIN'])
+    expect(customerFrom).toBe('both')
+  })
+})
+
 describe('matching a thread name against the customer master', () => {
   it('takes an exact name straight from the customer master', async () => {
     // The exact arm was never the risky one and is not gated on likeness.

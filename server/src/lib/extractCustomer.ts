@@ -225,8 +225,12 @@ type Source = 'thread' | 'on-file'
 
 const DEFAULT_ORDER: readonly Source[] = ['on-file', 'thread']
 
-/** Attention alone reads the thread first — see the comment in the loop below. */
-const ATTENTION_ORDER: readonly Source[] = ['thread', 'on-file']
+/**
+ * Thread-first. Attention always reads this way; the address does only when the
+ * stored copy turns out to be the same address with its lines run together.
+ * Both reasons are argued at the top of the loop below.
+ */
+const THREAD_FIRST: readonly Source[] = ['thread', 'on-file']
 
 export interface CustomerResolution {
   /**
@@ -325,6 +329,13 @@ export function resolveCustomer(
   const conflicts: Record<Source, string[]> = { thread: [], 'on-file': [] }
   const used = new Set<Source>()
 
+  /**
+   * The one case where a fresh read is allowed to beat the stored address.
+   * Computed once because both the precedence below and the note at the end
+   * turn on it, and they must not be able to disagree.
+   */
+  const repairedAddress = lostLineStructure(stored.address, thread.address)
+
   for (const field of FIELDS) {
     /**
      * ATTENTION INVERTS THE PRECEDENCE, on purpose.
@@ -335,8 +346,16 @@ export function resolveCustomer(
      * the thread is whoever is asking now. So the thread wins here and the file
      * is only the fallback for when the thread names nobody. This is the
      * instruction, not an oversight.
+     *
+     * ADDRESS INVERTS IT TOO, but only for the single case lostLineStructure
+     * recognises: the same address, stored with its line breaks lost. That is a
+     * repair and not a change of mind, so it takes nothing away from the rule
+     * above — the file still wins wherever the two sides say different things.
      */
-    const order = field === 'attention' ? ATTENTION_ORDER : DEFAULT_ORDER
+    const order =
+      field === 'attention' || (field === 'address' && repairedAddress)
+        ? THREAD_FIRST
+        : DEFAULT_ORDER
     const valueFrom = (source: Source) => (source === 'thread' ? thread : stored)[field]
 
     const winner = order.find((source) => valueFrom(source) !== '')
@@ -347,6 +366,13 @@ export function resolveCustomer(
 
     customer[field] = valueFrom(winner)
     used.add(winner)
+
+    /**
+     * A repaired address is not a disagreement. The stored copy it displaced
+     * says the same thing badly, so flagging it would send the desk off to
+     * compare two addresses that match. It gets its own note instead.
+     */
+    if (field === 'address' && repairedAddress) continue
 
     /**
      * ...and what the winner overruled. A customer who has moved office has
@@ -395,16 +421,23 @@ export function resolveCustomer(
   }
 
   /**
-   * At most four sentences and usually none: either guard having dropped
-   * something, either source having been overruled. customerConflicts carries
-   * the same disagreements as labels, for a screen that would rather mark the
-   * fields than print a sentence.
+   * At most five sentences and usually none: either guard having dropped
+   * something, either source having been overruled, the stored address having
+   * been repaired. customerConflicts carries the same disagreements as labels,
+   * for a screen that would rather mark the fields than print a sentence — and
+   * deliberately not the repair, which is not one of them.
+   *
+   * The repair is said out loud rather than done in silence, for the reason the
+   * dropped-stored note is: the record on the customer list is still broken,
+   * nobody has that list open while a quotation is being made, and this is the
+   * only place anyone finds out.
    */
   const notes = [
     droppedNote(dropped.thread, 'thread'),
     droppedNote(dropped['on-file'], 'on-file'),
     conflictNote(conflicts.thread, 'thread'),
     conflictNote(conflicts['on-file'], 'on-file'),
+    repairedAddress ? REPAIRED_ADDRESS_NOTE : undefined,
   ].filter((note): note is string => note !== undefined)
 
   return {
@@ -430,6 +463,52 @@ function sameValue(a: string, b: string): boolean {
   const flatten = (value: string) => value.replace(/\s+/g, ' ').trim().toLowerCase()
   return flatten(a) === flatten(b)
 }
+
+/**
+ * Whether the stored address is the SAME address as the fresh read, with its
+ * line structure lost.
+ *
+ * A record corrupted at some point in the past — "Plot 66, Sec 44Gurugram,
+ * Haryana - 122001", two lines run together with nothing between them — wins
+ * on-file precedence and then prints that way on every future quotation for
+ * that customer, because each save hands the broken value back. Precedence is
+ * right in general: a stored address was confirmed by somebody saving a
+ * quotation with it. It is wrong here, because these two are not competing
+ * claims about where the customer is. They are one claim, and one copy of it is
+ * legible.
+ *
+ * Sameness is judged with ALL whitespace removed and case folded, which is the
+ * narrowest test that can call these two strings the same: two genuinely
+ * different addresses do not survive it, not even ones sharing most of their
+ * text, so on-file still wins everywhere it should. The line count then fixes
+ * the direction, so a stored address that HAS its breaks can never lose to a
+ * flattened read of the same one.
+ */
+function lostLineStructure(stored: string, fresh: string): boolean {
+  if (stored === '' || fresh === '') return false
+
+  const squash = (value: string) => value.replace(/\s+/g, '').toLowerCase()
+  if (squash(stored) !== squash(fresh)) return false
+
+  return printedLines(fresh) > printedLines(stored)
+}
+
+/**
+ * Lines that would PRINT. A run of blank lines is spacing rather than
+ * structure, and counting it would let a stored address lose to a fresh one
+ * that says the same thing in the same shape with padding round it.
+ */
+function printedLines(value: string): number {
+  return value.split('\n').filter((line) => line.trim() !== '').length
+}
+
+/**
+ * Names the field the way the screens do, and says the address itself did not
+ * change — otherwise this reads as a third source of addresses rather than as
+ * the same one straightened out.
+ */
+const REPAIRED_ADDRESS_NOTE =
+  'The Address on your customer list has lost its line breaks; the same address, read from the thread, was used.'
 
 function droppedNote(dropped: string[], source: Source): string | undefined {
   if (dropped.length === 0) return undefined

@@ -177,6 +177,21 @@ export const SaveQuoteRequestSchema = z.object({
   sourceThread: z.string(),
   /** Set to clone an existing quote as the next revision, keeping its ref (§10). */
   reviseOf: z.string().optional(),
+  /**
+   * The sequence number the desk chose for this quotation — the 045 of
+   * NCS/2026-27/Quotes/RG/045.
+   *
+   * OMITTING IT MEANS "allocate the next one in the series", which is what
+   * every existing caller does and must keep doing: the reference stays the
+   * server's to hand out on save (§7) unless the desk deliberately says
+   * otherwise. Sent, it is both the number used and the number the counter is
+   * carried up to, so the save after it continues from 046 rather than handing
+   * back what was just typed.
+   *
+   * Ignored on a revision. A revision inherits its parent's reference (§10), so
+   * there is no number left to choose.
+   */
+  seqOverride: z.number().int().positive('A reference number starts at 001').optional(),
 })
 export type SaveQuoteRequest = z.infer<typeof SaveQuoteRequestSchema>
 

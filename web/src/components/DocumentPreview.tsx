@@ -36,6 +36,27 @@ interface Props {
   data: DocumentData
   /** Shown in place of the reference before the quotation has been saved. */
   pendingRef?: string
+  /**
+   * Makes the sequence number editable in the Ref line itself.
+   *
+   * The desk asked for it there rather than in a field elsewhere on the screen,
+   * and they are right: the reference is the one value you check by looking at
+   * the document, so that is where you want to change it. Only the number —
+   * NCS/<FY>/Quotes/<initials>/ is derived from the date and the salesperson,
+   * and typing it freely would produce references that sort and group wrongly.
+   *
+   * Absent means the reference is not editable, which is every case except an
+   * unsaved original: a saved one is printed on a document that may already
+   * have gone out, and a revision inherits the reference it revises.
+   */
+  editableSeq?: {
+    /** The number as typed, which may be blank or half-finished. */
+    value: string
+    onChange: (typed: string) => void
+    onBlur: () => void
+    /** Why this number rather than the one the server would have taken. */
+    hint?: string
+  }
 }
 
 /**
@@ -98,9 +119,14 @@ function withOrdinals(text: string) {
  * It is still a representation, not a rendering: the Word file and the PDF come
  * from the real letterhead. This shows content, order and emphasis.
  */
-export default function DocumentPreview({ data, pendingRef }: Props) {
+export default function DocumentPreview({ data, pendingRef, editableSeq }: Props) {
   const totals = computeTotals(data.items, data.tax.mode, data.tax.rate)
   const reference = data.ref || pendingRef || '—'
+  // Everything up to and including the last slash stays text; only what follows
+  // it becomes a box. Splitting the rendered reference rather than rebuilding
+  // it keeps one source for what the document says.
+  const lastSlash = reference.lastIndexOf('/')
+  const refPrefix = lastSlash === -1 ? '' : reference.slice(0, lastSlash + 1)
   const date = formatDateParts(fromISODate(data.date))
   // The serial-number column merges downward from the last line item, so one
   // unbroken cell runs past Sub Total, the tax rows and Total.
@@ -132,7 +158,30 @@ export default function DocumentPreview({ data, pendingRef }: Props) {
               date is raised. */}
           <tr>
             <td className={`${SHADED} font-bold`} colSpan={2}>
-              Ref: {reference}
+              {editableSeq && refPrefix !== '' ? (
+                <>
+                  Ref: {refPrefix}
+                  <input
+                    value={editableSeq.value}
+                    inputMode="numeric"
+                    aria-label="Reference number"
+                    title={editableSeq.hint}
+                    onChange={(e) => editableSeq.onChange(e.target.value)}
+                    onBlur={editableSeq.onBlur}
+                    // Sized and weighted to read as the text it replaces; only
+                    // the dotted rule says it can be typed in, and it is the
+                    // one thing on this panel that can.
+                    className="w-[3.2ch] border-b border-dashed border-accent bg-transparent
+                               p-0 text-center font-bold text-accent focus:outline-none
+                               focus:border-solid no-print"
+                  />
+                  {/* What the printed document would show, for anyone printing
+                      this panel — the box itself does not print. */}
+                  <span className="hidden print:inline">{reference.slice(lastSlash + 1)}</span>
+                </>
+              ) : (
+                <>Ref: {reference}</>
+              )}
               {data.revision > 0 && ` (Rev ${data.revision})`}
               <br />
               Date: {date.day}

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { allocateRef, formatRef, peekNextSeq } from './refno.js'
+import { allocateRef, claimRef, formatRef, peekNextSeq } from './refno.js'
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS ref_counters (
@@ -118,5 +118,85 @@ describe('peekNextSeq', () => {
     // Only an actual save takes one.
     expect(allocateRef(db, july, 'RG').seq).toBe(1)
     expect(peekNextSeq(db, july, 'RG')).toBe(2)
+  })
+})
+
+describe('claimRef — the desk chooses the number', () => {
+  const july = new Date(2026, 6, 10)
+
+  it('uses the number asked for and carries the counter to it', () => {
+    // The ask that started this: 042 edited to 045, so the next one is 046.
+    db.prepare('INSERT INTO ref_counters (fy, initials, last_seq) VALUES (?, ?, ?)').run(
+      '2026-27', 'RG', 42,
+    )
+
+    expect(claimRef(db, july, 'RG', 45).ref).toBe('NCS/2026-27/Quotes/RG/045')
+    expect(peekNextSeq(db, july, 'RG')).toBe(46)
+    expect(allocateRef(db, july, 'RG').ref).toBe('NCS/2026-27/Quotes/RG/046')
+  })
+
+  it('starts a series that has none yet', () => {
+    expect(claimRef(db, july, 'RG', 7).ref).toBe('NCS/2026-27/Quotes/RG/007')
+    expect(allocateRef(db, july, 'RG').seq).toBe(8)
+  })
+
+  it('never moves the counter backwards', () => {
+    // 010 is a gap — a deleted quotation, say. Filling it must not rewind the
+    // series, or the next ordinary save re-issues 011 to a second customer.
+    claimRef(db, july, 'RG', 45)
+    expect(claimRef(db, july, 'RG', 10).ref).toBe('NCS/2026-27/Quotes/RG/010')
+
+    expect(peekNextSeq(db, july, 'RG')).toBe(46)
+    expect(allocateRef(db, july, 'RG').seq).toBe(46)
+  })
+
+  it('claiming the number the counter already sits on leaves it there', () => {
+    claimRef(db, july, 'RG', 45)
+    claimRef(db, july, 'RG', 45)
+    expect(peekNextSeq(db, july, 'RG')).toBe(46)
+  })
+
+  it('moves only its own series', () => {
+    claimRef(db, july, 'RG', 45)
+    expect(peekNextSeq(db, july, 'SK')).toBe(1)
+    // A different financial year is a different series too (§7).
+    expect(peekNextSeq(db, new Date(2027, 3, 1), 'RG')).toBe(1)
+  })
+
+  it('refuses a number that is not a positive whole one', () => {
+    for (const bad of [0, -3, 4.5, Number.NaN]) {
+      expect(() => claimRef(db, july, 'RG', bad)).toThrow(/whole number/i)
+    }
+    // And nothing was written on the way to refusing.
+    expect(peekNextSeq(db, july, 'RG')).toBe(1)
+  })
+
+  it('refuses to claim without initials', () => {
+    expect(() => claimRef(db, july, '   ', 45)).toThrow(/initials/i)
+  })
+
+  it('is atomic against a second connection, exactly as allocateRef is', () => {
+    // Same situation as the interleaving test above: two connections on one
+    // file. A claim that read-then-wrote could lose to the allocate landing
+    // between its read and its write, and hand 101 out twice.
+    const dir = mkdtempSync(path.join(tmpdir(), 'refno-claim-'))
+    const file = path.join(dir, 'quotes.db')
+
+    const a = new Database(file)
+    a.exec(SCHEMA)
+    a.pragma('journal_mode = WAL')
+    const b = new Database(file)
+    b.pragma('journal_mode = WAL')
+
+    try {
+      expect(claimRef(a, july, 'RG', 100).seq).toBe(100)
+      expect(allocateRef(b, july, 'RG').seq).toBe(101)
+      expect(claimRef(b, july, 'RG', 50).seq).toBe(50)
+      expect(allocateRef(a, july, 'RG').seq).toBe(102)
+    } finally {
+      a.close()
+      b.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { chooseRef } from './pages/QuoteEditor'
 
 /**
  * The points where a screen hands on work something else did for it.
@@ -24,9 +25,17 @@ import { describe, expect, it } from 'vitest'
  * whole, so a term the draft type never names is dropped by the assignment
  * itself.
  *
+ * The reference number is a fourth, and a seam of a different kind: not a field
+ * dropped on the way through but two answers to one question. The desk can now
+ * choose the number, and that one number has to reach the document beside the
+ * form AND the save request — show one and claim the other, and a quotation goes
+ * out under a reference the file does not have.
+ *
  * These read the source rather than a rendered screen because the suite runs
  * in node with no DOM, and what is being guarded — a field going missing at
- * the seam — is plain in the source.
+ * the seam — is plain in the source. The reference is the exception: the
+ * decision is a pure function, so it is called rather than read, and only the
+ * two sides taking their answer from the one call are checked in the source.
  */
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const read = (...parts: string[]) => readFileSync(path.resolve(ROOT, ...parts), 'utf8')
@@ -116,5 +125,58 @@ describe('the screens pass on what was built for them', () => {
     // declaration names its parameter `items` whatever the screen passes in.
     const built = /setDraft\(\s*newDraft\(\s*(\w+)/.exec(app)
     expect(built?.[1], `newDraft is built from something other than ${alias}`).toBe(alias)
+  })
+})
+
+describe('the reference number the desk chose', () => {
+  it('is claimed only when it was changed', () => {
+    // Untouched — the box is showing the server's own peek back at it — so
+    // nothing is sent and the number stays the server's to hand out atomically
+    // on save. An override every time and two saves that met would take the
+    // same number.
+    expect(chooseRef('RG', 46, 46).seqOverride).toBeUndefined()
+
+    // Changed, so it is asked for by name.
+    expect(chooseRef('RG', 45, 46).seqOverride).toBe(45)
+
+    // The peek never arrived and the desk typed a number anyway. It must be
+    // sent: allocate instead and the server picks something the document on
+    // screen does not say.
+    expect(chooseRef('RG', 45, null).seqOverride).toBe(45)
+  })
+
+  it('is shown exactly as it will be claimed', () => {
+    const chosen = chooseRef('rg', 45, 46)
+    expect(chosen.pendingRef).toBe('NCS/…/RG/045')
+    expect(chosen.seqOverride).toBe(45)
+  })
+
+  it('is nothing at all until there is a number', () => {
+    // Not 001, which is a number nobody chose and a reference another
+    // quotation is already carrying.
+    expect(chooseRef('RG', null, null)).toEqual({ pendingRef: 'NCS/…/RG/???' })
+  })
+
+  it('reaches the document and the request from the one decision', () => {
+    const editor = withoutComments(read('web', 'src', 'pages', 'QuoteEditor.tsx'))
+
+    const shown = /pendingRef=\{(\w+)\.pendingRef\}/.exec(editor)
+    expect(shown, 'the preview builds a pending reference of its own again').not.toBeNull()
+
+    const decided = /const (\w+) = [^\n]*\b(\w+)\.seqOverride\b/.exec(editor)
+    expect(decided, 'the number sent to the server is worked out somewhere else').not.toBeNull()
+
+    expect(decided![2], 'the reference shown and the number sent come from different places').toBe(
+      shown![1],
+    )
+    expect(editor, `${shown![1]} is no longer what chooseRef answered`).toMatch(
+      new RegExp(`const ${shown![1]} = chooseRef\\(`),
+    )
+
+    // And the request carries that number rather than one it reached for itself.
+    const payload = objectAfter(editor, "apiPost<Quote>('/api/quote', {")
+    const carried = /[{,]\s*seqOverride\s*(?::\s*([\w.]+))?\s*[,}]/.exec(payload)
+    expect(carried, 'the request no longer carries the chosen number').not.toBeNull()
+    expect(carried![1] ?? 'seqOverride', 'the request sends a number of its own').toBe(decided![1])
   })
 })

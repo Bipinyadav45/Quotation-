@@ -75,6 +75,13 @@ export default function QuoteEditor({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [nextSeq, setNextSeq] = useState<number | null>(null)
+  /**
+   * The number this quotation will take: the server's peek until the desk types
+   * over it, theirs from then on.
+   */
+  const [seq, setSeq] = useState<number | null>(null)
+  /** Kept separately so a half-deleted "04" does not fight the parser, as rates are. */
+  const [seqText, setSeqText] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [message, setMessage] = useState<{ tone: 'help' | 'problem'; text: string } | null>(null)
   const [status, setStatus] = useState<Quote['status']>(saved?.status ?? 'draft')
@@ -83,12 +90,26 @@ export default function QuoteEditor({
   /** What we last quoted each line for, by line key. */
   const [priceHistory, setPriceHistory] = useState<Record<string, PriceMatch[]>>({})
   const dragFrom = useRef<number | null>(null)
+  /**
+   * Set the moment the desk types in the reference box. The peek runs again
+   * whenever the date or the initials change, and it must not take their number
+   * back on its way past.
+   */
+  const seqIsTheirs = useRef(false)
 
   const health = useApi<{ checks: Record<string, { ok: boolean; detail: string }> }>('/api/health')
   const capabilities = useApi<{ draftEmail: boolean }>('/api/capabilities')
   const aiAvailable = capabilities.data?.draftEmail ?? false
   const pdfReady = health.data?.checks.pdf?.ok ?? false
   const pdfDetail = health.data?.checks.pdf?.detail ?? ''
+
+  /** The reference the page shows and the number the save claims — see chooseRef. */
+  const refChoice = chooseRef(draft.initials, seq, nextSeq)
+  /**
+   * A saved quotation's reference is already on a document and a revision
+   * carries its parent's (§10), so neither leaves a number here to be chosen.
+   */
+  const seqOverride = saved || draft.reviseOf ? undefined : refChoice.seqOverride
 
   /**
    * The document, rebuilt from the form on every keystroke. This is the whole
@@ -144,7 +165,15 @@ export default function QuoteEditor({
     const params = new URLSearchParams({ initials: draft.initials, date: draft.date })
     fetch(`/api/next-ref?${params}`)
       .then((r) => r.json())
-      .then((d: { nextSeq: number }) => setNextSeq(d.nextSeq))
+      .then((d: { nextSeq: number }) => {
+        setNextSeq(d.nextSeq)
+        // Fills the box, and never refills it: a number the desk typed is
+        // theirs, and this runs again every time the date or the initials move.
+        if (!seqIsTheirs.current) {
+          setSeq(d.nextSeq)
+          setSeqText(pad3(d.nextSeq))
+        }
+      })
       .catch(() => setNextSeq(null))
   }, [draft.initials, draft.date])
 
@@ -226,6 +255,10 @@ export default function QuoteEditor({
         terms: draft.terms,
         sourceThread,
         ...(draft.reviseOf ? { reviseOf: draft.reviseOf } : {}),
+        // Absent unless the desk moved off the number the server offered.
+        // Sending the peek back would make every save an override, and the
+        // number would stop being taken atomically the moment two saves met.
+        ...(seqOverride !== undefined ? { seqOverride } : {}),
       })
       onSaved(quote)
     } catch (err) {
@@ -255,11 +288,7 @@ export default function QuoteEditor({
             </span>
           ) : (
             <span className="label no-print">
-              will become{' '}
-              <span className="ref text-ink">
-                NCS/…/{draft.initials.toUpperCase()}/
-                {nextSeq === null ? '???' : String(nextSeq).padStart(3, '0')}
-              </span>
+              will become <span className="ref text-ink">{refChoice.pendingRef}</span>
             </span>
           )
         }
@@ -694,11 +723,37 @@ export default function QuoteEditor({
             </span>
           </div>
 
+          {/* The reference number is edited in the Ref line of the document
+              itself rather than in a field over on the form: it is the value
+              you check by looking at the document, so that is where it should
+              be changed. Only an unsaved original offers it — a saved one is
+              printed on something that may already have gone out, and a
+              revision inherits the reference it revises. */}
           <DocumentPreview
             data={preview}
-            pendingRef={`NCS/…/${draft.initials.toUpperCase()}/${
-              nextSeq === null ? '???' : String(nextSeq).padStart(3, '0')
-            }`}
+            pendingRef={refChoice.pendingRef}
+            editableSeq={
+              saved || draft.reviseOf
+                ? undefined
+                : {
+                    value: seqText,
+                    onChange: (typed) => {
+                      seqIsTheirs.current = true
+                      setSeqText(typed)
+                      // An empty or half-typed box leaves the last real number
+                      // standing, so what the document shows and what the save
+                      // claims cannot part company mid-edit.
+                      if (/^\d+$/.test(typed.trim()) && Number(typed) >= 1) setSeq(Number(typed))
+                    },
+                    onBlur: () => setSeqText(seq === null ? '' : pad3(seq)),
+                    hint:
+                      nextSeq === null
+                        ? 'The series could not be read. Left alone, the server takes the next number.'
+                        : seqOverride === undefined
+                          ? 'The next in the series, taken when you save.'
+                          : `Chosen instead of ${pad3(nextSeq)} — refused on save if it is already in use.`,
+                  }
+            }
           />
 
           <div className="mt-3 flex flex-wrap items-center gap-2 no-print">
@@ -800,7 +855,9 @@ export default function QuoteEditor({
           title={
             saved
               ? 'This already has a reference — saving again takes a new one'
-              : 'Takes the next reference number in the series'
+              : seqOverride !== undefined
+                ? 'Takes the reference number you chose'
+                : 'Takes the next reference number in the series'
           }
         >
           {saving
@@ -818,6 +875,46 @@ export default function QuoteEditor({
       )}
     </div>
   )
+}
+
+function pad3(seq: number): string {
+  return String(seq).padStart(3, '0')
+}
+
+export interface RefChoice {
+  /** The reference as it will read, for the header and the document beside the form. */
+  pendingRef: string
+  /** What POST /api/quote carries. Absent means "server, take the next one". */
+  seqOverride?: number
+}
+
+/**
+ * The reference shown and the number claimed, decided together.
+ *
+ * Together because they are one decision. The document beside the form is the
+ * document, so a number the desk typed has to reach both the page and the
+ * request or neither; worked out separately they drift, and the drift is silent
+ * — the screen reads 046 while 047 is saved and the desk hears it from the
+ * customer.
+ *
+ * `peeked` is what GET /api/next-ref says the server would allocate on its own.
+ * Matching it means nothing was changed, so nothing is sent and the number is
+ * still taken atomically on save (§7). An override sent every time would hand
+ * two people the same number the first time two saves overlapped.
+ *
+ * A null `chosen` — the peek never arrived — prints as ??? rather than as a
+ * number nobody chose, and sends nothing, which is the server allocating as it
+ * always did.
+ */
+export function chooseRef(
+  initials: string,
+  chosen: number | null,
+  peeked: number | null,
+): RefChoice {
+  return {
+    pendingRef: `NCS/…/${initials.toUpperCase()}/${chosen === null ? '???' : pad3(chosen)}`,
+    ...(chosen !== null && chosen !== peeked ? { seqOverride: chosen } : {}),
+  }
 }
 
 // Both defined in index.css, so the "boxed = editable" convention is stated in
