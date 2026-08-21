@@ -295,6 +295,18 @@ function cell(width: number, body: string, opts: StructuralCellOpts = {}): strin
   )
 }
 
+/**
+ * A GSTIN line that vanishes when there is no GSTIN.
+ *
+ * Three paragraphs, not one: docxtemplater only removes the paragraph when the
+ * opening and closing tags stand alone in paragraphs of their own. An empty
+ * value in a single tagged paragraph leaves that paragraph behind, and a blank
+ * line inside a table cell is a line — it takes the row with it.
+ */
+function gstinLine(tag: string): string {
+  return cp(`{#${tag}}`) + cp(`{${tag}}`) + cp(`{/${tag}}`)
+}
+
 /** The common case: one paragraph, one formatting. */
 function tc(width: number, text: string, opts: CellOpts = {}): string {
   return cell(width, cp(text, opts), { span: opts.span, shading: opts.shading })
@@ -391,7 +403,17 @@ function buildBody(sectPr: string): string {
           // Label and value arrive as ONE string — see customerGstinLine in
           // server/src/lib/docx.ts. A literal "GSTIN: " label here would print
           // on every quotation whose customer has none.
-          cp('{customerGstinLine}'),
+          //
+          // WRAPPED IN A SECTION, and that is the whole point of the three
+          // paragraphs. A blank tag substitutes to an empty string, which
+          // empties the runs but LEAVES THE PARAGRAPH STANDING — a full blank
+          // line inside the cell, which pushes the row taller and put visible
+          // white space under the address on every quotation without a GSTIN.
+          // The section drops the paragraph instead. `paragraphLoop` only lifts
+          // a section to paragraph level when its tags stand alone in
+          // paragraphs of their own, so they do; written inline the paragraph
+          // would survive and nothing would look different from here.
+          gstinLine('customerGstinLine'),
       ) +
         shaded(
           h2 + h3,
@@ -403,8 +425,11 @@ function buildBody(sectPr: string): string {
             COMPANY.addressLines.map((line) => cp(line, { ordinals: true })).join('') +
             // A tag rather than COMPANY.gstin baked in like the name above,
             // because the number is not known yet: filling it in then reaches
-            // the document without this binary being regenerated.
-            cp('{companyGstinLine}'),
+            // the document without this binary being regenerated. Sectioned
+            // for the same reason as the customer's, and it matters more here:
+            // COMPANY.gstin is blank today, so EVERY document was carrying the
+            // empty line.
+            gstinLine('companyGstinLine'),
           2,
         ),
       ROW_HEIGHT.headerTo,

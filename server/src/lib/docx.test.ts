@@ -253,13 +253,42 @@ describe('renderDocx — the golden file', () => {
   })
 
   it('prints no GSTIN label at all when there is no GSTIN to print', () => {
-    // The regression that matters. A dangling "GSTIN: " on a document the
-    // customer files against their own return is worse than an absent line, so
-    // an unknown GSTIN prints as an empty paragraph and nothing else. The
-    // fixture carries none; Newtech's own is blank until someone supplies it,
-    // and the count follows it rather than pinning it at zero for ever.
+    // A dangling "GSTIN: " on a document the customer files against their own
+    // return is worse than an absent line. The fixture carries none; Newtech's
+    // own is blank until someone supplies it, and the count follows it rather
+    // than pinning it at zero for ever.
     expect(QUOTE.customer.gstin).toBeUndefined()
     expect((text.match(/GSTIN/g) ?? []).length).toBe(COMPANY.gstin ? 1 : 0)
+  })
+
+  it('leaves no blank line behind where a GSTIN would have been', () => {
+    // The regression that matters, and the one no assertion above can see: a
+    // blank GSTIN used to substitute into its paragraph and leave the paragraph
+    // STANDING — an empty line inside the cell, which pushed the whole row
+    // taller and put visible white space under the address on every quotation
+    // that had no GSTIN. Stripped of its tags that paragraph is the empty
+    // string, indistinguishable from no paragraph at all, so only the count
+    // sees it. It reached a customer before it was caught.
+    const cells = (buffer: Buffer) => {
+      const xml = new PizZip(buffer).file('word/document.xml')!.asText()
+      const tbl = xml.slice(xml.indexOf('<w:tbl>'), xml.indexOf('</w:tbl>'))
+      return tbl.split('<w:tc>').slice(1).map((c) => c.split('<w:p>').length - 1)
+    }
+
+    // To cell: "To:", the name, the address. From cell: "From:", the name, and
+    // one paragraph per address line. A GSTIN adds one to whichever side has
+    // one — and neither does here, so neither may carry a spare.
+    const none = cells(renderDocx(QUOTE))
+    expect(none[1], 'the To cell carries a blank GSTIN paragraph').toBe(3)
+    expect(none[2], 'the From cell carries a blank GSTIN paragraph').toBe(
+      2 + COMPANY.addressLines.length + (COMPANY.gstin ? 1 : 0),
+    )
+
+    // Give the customer one and exactly one paragraph appears, in the To cell.
+    const some = cells(renderDocx({ ...QUOTE, customer: { ...QUOTE.customer, gstin: '29AABCM1234F1Z5' } }))
+    expect(some[1]).toBe(none[1]! + 1)
+    expect(some[2]).toBe(none[2])
+    expect(some.slice(3)).toEqual(none.slice(3))
   })
 
   it('leaves the address block at three columns and the item table at five', () => {
