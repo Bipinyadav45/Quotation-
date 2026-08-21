@@ -196,6 +196,16 @@ interface ParaOpts extends RunOpts {
    * plain left-aligned text, which is exactly what it looked like.
    */
   style?: string
+  /**
+   * Keep this paragraph on the same page as the one after it.
+   *
+   * The closing is a block — "Yours Truly,", the company line, the space for a
+   * wet signature, the name — and a page break anywhere inside it strands the
+   * signature on a sheet of its own carrying nothing but the letterhead. That
+   * is what happened, and trimming the block only moves the threshold; this is
+   * what stops it happening again on a longer quotation.
+   */
+  keepNext?: boolean
   /** Suppress the standard body indent — used inside table cells. */
   bare?: boolean
   /** Override the body indent, for the terms block's deeper one. */
@@ -221,6 +231,7 @@ const TERMS_NUMBERED: ParaOpts = { ...TERMS, tabs: [TERM_COLON_TAB] }
 
 function p(text = '', opts: ParaOpts = {}): string {
   const style = opts.style ? `<w:pStyle w:val="${opts.style}"/>` : ''
+  const keep = opts.keepNext ? '<w:keepNext/>' : ''
   const indent = opts.indent ?? { left: BODY_INDENT_LEFT, right: BODY_INDENT_RIGHT }
   const ind = opts.bare ? '' : `<w:ind w:left="${indent.left}" w:right="${indent.right}"/>`
   const jc = opts.align && opts.align !== 'left' ? `<w:jc w:val="${opts.align}"/>` : ''
@@ -228,7 +239,7 @@ function p(text = '', opts: ParaOpts = {}): string {
   const tabs = opts.tabs?.length
     ? `<w:tabs>${opts.tabs.map((pos) => `<w:tab w:val="left" w:pos="${pos}"/>`).join('')}</w:tabs>`
     : ''
-  return `<w:p><w:pPr>${style}${spacing}${ind}${tabs}${jc}</w:pPr>${runs(text, opts)}</w:p>`
+  return `<w:p><w:pPr>${style}${keep}${spacing}${ind}${tabs}${jc}</w:pPr>${runs(text, opts)}</w:p>`
 }
 
 const BORDERS =
@@ -330,14 +341,14 @@ function tc(width: number, text: string, opts: CellOpts = {}): string {
  * either wastes space on a short item or does nothing at all on a long one.
  */
 export const ROW_HEIGHT = {
-  headerRef: 542,
-  headerTo: 1339,
-  headerContact: 346,
+  headerRef: 400,
+  headerTo: 1100,
+  headerContact: 300,
   headerAttention: 262,
-  itemHeader: 655,
+  itemHeader: 560,
   item: 300,
-  subTotal: 480,
-  tax: 441,
+  subTotal: 320,
+  tax: 300,
   total: 264,
 } as const
 
@@ -507,7 +518,19 @@ function buildBody(sectPr: string): string {
       cell(sr, cp() + cp('{#items}{sr}'), { vMerge: 'restart' }) +
         cell(
           desc,
-          cp() + cp('{descName}', { bold: true, underline: true }) + cp() + cp('{descSpec}'),
+          // The separator blank lives INSIDE the section with the specification
+          // it separates. Most lines are a product name and nothing else — the
+          // §11 cables, "Installation Charges" — and left outside, those two
+          // paragraphs printed as two dead lines under every such row, padding
+          // the table for no reason and pushing the closing towards a second
+          // page. Same trap as the GSTIN line, and the same three-paragraph
+          // shape fixes it.
+          cp() +
+            cp('{descName}', { bold: true, underline: true }) +
+            cp('{#descSpec}') +
+            cp() +
+            cp('{descSpec}') +
+            cp('{/descSpec}'),
         ) +
         cell(rate, cp() + cp('{rate}', { align: 'center' })) +
         cell(qty, cp() + cp('{qty}', { align: 'center' })) +
@@ -588,21 +611,30 @@ function buildBody(sectPr: string): string {
       TERMS,
     ),
     p('Looking forward to an encouraging and early response.', TERMS),
-    // The closing, blank line for blank line as the original has it. "Thanking
-    // you," carries no tab — it sits flush with the terms above it — and the
-    // lone tabbed blank two lines down is the original's, not a stray.
+    /**
+     * The closing, spaced as the quotation the desk supplied as correct — one
+     * blank after "Thanking you,", two before the name.
+     *
+     * It used to carry an extra blank in each gap and a trailing one after the
+     * name. Those three lines were the difference between one page and two: an
+     * ordinary single-line quotation filled page one to within 2pt of the
+     * footer and put the signature alone on page two, under a letterhead and
+     * above nothing at all.
+     *
+     * keepNext holds the block together from "Thanking you," down to the name,
+     * so a quotation long enough to genuinely need a second page takes the
+     * WHOLE closing with it rather than stranding the signature. Trimming alone
+     * would only have moved the threshold; this removes the failure.
+     */
     p('', TERMS),
-    p('Thanking you,', TERMS),
-    p('', TERMS),
-    p('\t', TERMS),
-    p('Yours Truly,', { ...TERMS, bold: true }),
-    p(COMPANY.closingFor, { ...TERMS, bold: true }),
-    // Three blank paragraphs, the space left for a wet signature.
-    p('', TERMS),
-    p('', TERMS),
-    p('', TERMS),
+    p('Thanking you,', { ...TERMS, keepNext: true }),
+    p('', { ...TERMS, keepNext: true }),
+    p('Yours Truly,', { ...TERMS, bold: true, keepNext: true }),
+    p(COMPANY.closingFor, { ...TERMS, bold: true, keepNext: true }),
+    // The space left for a wet signature.
+    p('', { ...TERMS, keepNext: true }),
+    p('', { ...TERMS, keepNext: true }),
     p('{signatory}', { ...TERMS, bold: true }),
-    p('', TERMS),
   ]
 
   return `<w:body>${parts.join('')}${sectPr}</w:body>`

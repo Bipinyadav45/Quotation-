@@ -291,6 +291,33 @@ describe('renderDocx — the golden file', () => {
     expect(some.slice(3)).toEqual(none.slice(3))
   })
 
+  it('leaves no blank lines under a line item that has no specification', () => {
+    // Most lines are a product name and nothing else. The separator blank and
+    // the {descSpec} paragraph used to print anyway — two dead lines under
+    // every such row, padding the table and pushing the closing towards a
+    // second page. Both live inside a section now, so they go together.
+    const cellParagraphs = (buffer: Buffer, desc: string) => {
+      const xml = new PizZip(
+        renderDocx({ ...QUOTE, items: [{ desc, make: '', partCode: '', qty: 1, rate: 100 }] }),
+      )
+        .file('word/document.xml')!
+        .asText()
+      // The item table is the second one; its second row is the line item.
+      const tables = xml.split('<w:tbl>')
+      const row = tables[2]!.split('<w:tr>')[2]!
+      const cell = row.split('<w:tc>')[2]! // Sr No, then the description
+      return cell.split('<w:p>').length - 1
+    }
+
+    const nameOnly = cellParagraphs(rendered, 'Logitech Wireless Keyboard and Mouse Set')
+    const withSpec = cellParagraphs(rendered, 'HP 280 G9 MT ( MII )\nCore i5-14500, 8GB DDR5')
+
+    // A blank opener and the name. Nothing else.
+    expect(nameOnly, 'a name-only line still carries blank paragraphs').toBe(2)
+    // The same, plus the separator and the specification.
+    expect(withSpec).toBe(4)
+  })
+
   it('leaves the address block at two columns and the item table at five', () => {
     // GSTIN yes, HSN no. Both GSTIN lines are paragraphs inside cells that
     // already exist, so neither table may have gained a column.

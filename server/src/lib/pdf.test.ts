@@ -120,3 +120,62 @@ describe('temp-directory cleanup', () => {
     }
   })
 })
+
+describe('how much of a page a quotation takes', () => {
+  /**
+   * An ordinary quotation must come out on ONE page.
+   *
+   * It did not. A single-line quotation filled page one to within 2pt of the
+   * footer and put "Rakhi Gupte" alone on page two, under a letterhead logo and
+   * above nothing at all — which is what the desk photographed and sent back.
+   *
+   * Nothing in the suite could see it. Page count is a property of the RENDERED
+   * document, so it needs the converter, and every other assertion in the repo
+   * reads .docx XML where a page break does not exist yet. This is the only
+   * test that can fail on it, which is why it lives here beside the converter
+   * rather than with the document tests.
+   */
+  const pageCount = async (quote: Quote): Promise<number> => {
+    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
+    const bytes = new Uint8Array(await docxToPdf(renderDocx(quote)))
+    return (await pdfjs.getDocument({ data: bytes, disableFontFace: true }).promise).numPages
+  }
+
+  it.runIf(config.pdfBackend)('fits an ordinary quotation on one page', async () => {
+    expect(await pageCount({ ...QUOTE, items: QUOTE.items.slice(0, 1) })).toBe(1)
+    // Two lines is the common case and must still fit.
+    expect(await pageCount(QUOTE)).toBe(1)
+  }, 120_000)
+
+  it.runIf(config.pdfBackend)('keeps the whole closing together when it does spill', async () => {
+    // A long quotation legitimately needs a second page. What must never happen
+    // again is the signature travelling alone: keepNext ties "Thanking you,"
+    // down to the name, so the closing moves as a block or not at all.
+    const long: Quote = {
+      ...QUOTE,
+      items: Array.from({ length: 6 }, (_, i) => ({
+        desc: `Logitech Pebble ${i + 1} Combo, Wireless Keyboard and Mouse`,
+        make: 'Logitech',
+        partCode: '',
+        qty: 1,
+        rate: 425_000,
+      })),
+    }
+
+    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
+    const bytes = new Uint8Array(await docxToPdf(renderDocx(long)))
+    const doc = await pdfjs.getDocument({ data: bytes, disableFontFace: true }).promise
+    expect(doc.numPages).toBeGreaterThan(1)
+
+    const last = await doc.getPage(doc.numPages)
+    const text = (await last.getTextContent()).items
+      .map((i) => ('str' in i ? i.str : ''))
+      .join('')
+      .replace(/\s+/g, ' ')
+
+    // The name never arrives without the block it belongs to.
+    expect(text).toContain('Rakhi Gupte')
+    expect(text, 'the signature was stranded without its closing').toContain('Yours Truly')
+    expect(text).toContain('Thanking you')
+  }, 180_000)
+})

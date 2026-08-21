@@ -372,8 +372,10 @@ export default function DocumentPreview({ data, pendingRef, editableSeq }: Props
         <p className="mt-3">Thanking you,</p>
         <p className="mt-4 font-bold">Yours Truly,</p>
         <p className="font-bold">{COMPANY.closingFor}</p>
-        {/* Three blank lines, the room left for a wet signature. */}
-        <p className="mt-12 font-bold">{data.signatory}</p>
+        {/* Two blank lines, the room left for a wet signature. It was three,
+            and with the extra blank in the gap above it that was the difference
+            between one page and two on the download. */}
+        <p className="mt-8 font-bold">{data.signatory}</p>
       </div>
     </div>
   )
