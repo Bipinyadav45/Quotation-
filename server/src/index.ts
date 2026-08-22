@@ -1,4 +1,5 @@
 import express from 'express'
+import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { config } from './config.js'
@@ -64,15 +65,36 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   res.status(500).json({ error: err.message })
 })
 
+/**
+ * A short hash of the API key, never any part of the key itself.
+ *
+ * It exists because an hour went into a bug that was not a bug: a dev server
+ * from the previous day still held this port, so a replaced key never reached
+ * the process actually answering, and the app kept reporting the OLD key's
+ * quota as exhausted. Every check said the new key was fine, because every
+ * check ran in a fresh process. One line at boot answers "which key is THIS
+ * process using" and the whole class of confusion goes away.
+ *
+ * A hash rather than a prefix: two keys issued to the same project share their
+ * first characters, so a prefix would have been identical for both and proved
+ * nothing.
+ */
+function keyFingerprint(): string {
+  const key = config.geminiApiKey
+  if (!key) return 'none set — the AI features are off'
+  return `#${createHash('sha256').update(key).digest('hex').slice(0, 8)}`
+}
+
 function boot(): void {
   getDb() // opens the file and applies migrations, or throws loudly
 
   cleanTempDir()
   void warmUp() // fire and forget — a cold converter must not delay startup
 
-  app.listen(config.port, () => {
+  const server = app.listen(config.port, () => {
     console.log(`[server] http://localhost:${config.port}`)
     console.log(`[server] database ${config.dbPath}`)
+    console.log(`[server] AI key ${keyFingerprint()}`)
     if (config.pdfBackend) {
       console.log(`[server] PDF backend: ${config.pdfBackend}`)
     } else {
@@ -83,6 +105,20 @@ function boot(): void {
           '         Or set SOFFICE_PATH / WINWORD_PATH in .env',
       )
     }
+  })
+
+  // Silence here is how the previous day's server kept answering: the restart
+  // died, the old process carried on, and every symptom pointed at the code.
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(
+        `[server] Port ${config.port} is already taken — something else is answering on it, ` +
+          'very likely an older copy of this server.\n' +
+          '         Stop it first; this process is exiting rather than pretending to have started.',
+      )
+      process.exit(1)
+    }
+    throw err
   })
 }
 
