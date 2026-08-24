@@ -17,6 +17,16 @@ import { fileURLToPath, URL } from 'node:url'
  */
 const API_PORT = Number(process.env.PORT ?? 4000)
 
+/**
+ * The port the desk opens, also from .env so both are changed in one place.
+ *
+ * `strictPort` matters more than it looks: without it Vite quietly takes the
+ * next free port when its own is busy, which is how this machine ended up with
+ * abandoned dev servers on 5173, 5174, 5175 AND 5177 at once. A URL that moves
+ * without saying so is how you end up looking at yesterday's build.
+ */
+const WEB_PORT = Number(process.env.WEB_PORT ?? 5173)
+
 // The frontend lives in web/. In development Vite serves it on :5173 and proxies
 // /api through to Express. In production `npm run build` emits web/dist, which
 // Express serves itself — one process, one port. See server/src/index.ts.
@@ -29,7 +39,8 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: WEB_PORT,
+    strictPort: true,
     proxy: {
       '/api': `http://localhost:${API_PORT}`,
     },
