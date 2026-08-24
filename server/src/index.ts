@@ -85,6 +85,10 @@ function keyFingerprint(): string {
   return `#${createHash('sha256').update(key).digest('hex').slice(0, 8)}`
 }
 
+/** How long to let an outgoing `tsx watch` process release the port. */
+const HANDOVER_MS = 5_000
+const HANDOVER_STEP_MS = 250
+
 function boot(): void {
   getDb() // opens the file and applies migrations, or throws loudly
 
@@ -107,18 +111,33 @@ function boot(): void {
     }
   })
 
-  // Silence here is how the previous day's server kept answering: the restart
-  // died, the old process carried on, and every symptom pointed at the code.
+  /**
+   * A port already in use has to be LOUD — silence is how a server from the
+   * previous day kept answering while every restart died unnoticed, and it cost
+   * an afternoon of chasing a bug that was not there.
+   *
+   * But it must not be instant. `tsx watch` starts the replacement before the
+   * outgoing process has released the socket, so a brief clash is the ordinary
+   * case on every file save; exiting on the first one leaves nothing running at
+   * all after a couple of edits. So wait for the old one to go, and complain
+   * only if it genuinely will not.
+   */
+  let waited = 0
   server.on('error', (err: NodeJS.ErrnoException) => {
-    if (err.code === 'EADDRINUSE') {
-      console.error(
-        `[server] Port ${config.port} is already taken — something else is answering on it, ` +
-          'very likely an older copy of this server.\n' +
-          '         Stop it first; this process is exiting rather than pretending to have started.',
-      )
-      process.exit(1)
+    if (err.code !== 'EADDRINUSE') throw err
+
+    if (waited < HANDOVER_MS) {
+      waited += HANDOVER_STEP_MS
+      setTimeout(() => server.listen(config.port), HANDOVER_STEP_MS)
+      return
     }
-    throw err
+
+    console.error(
+      `[server] Port ${config.port} is still taken after ${HANDOVER_MS / 1000}s — something ` +
+        'else is answering on it, very likely an older copy of this server.\n' +
+        '         Stop it first; this process is exiting rather than pretending to have started.',
+    )
+    process.exit(1)
   })
 }
 

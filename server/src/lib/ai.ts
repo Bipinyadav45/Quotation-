@@ -28,11 +28,37 @@ const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models'
  * answered 503/429 on this account while the pinned flash models answered
  * instantly — an alias that moves under you is not what you want behind a
  * button someone presses while a customer waits.
+ *
+ * NOT the newest one. This list is ordered by what actually answers, measured
+ * on this key rather than by version number: gemini-3.7-flash returned 503, and
+ * then stopped answering at all — 200 seconds with no reply — while these three
+ * came back in about 1.2 to 1.5 seconds each. It was the default, and it is
+ * tried first on every call, so the desk pressed "Read it with AI" and watched
+ * nothing happen for two minutes.
+ *
+ * 3.7 is still in the chain, last, so it costs nothing until everything else
+ * has failed and it is bounded by REQUEST_TIMEOUT_MS when it does. Re-measure
+ * before promoting it: `curl -w '%{time_total}'` against each model is enough.
  */
-export const DEFAULT_MODEL = 'gemini-3.7-flash'
+export const DEFAULT_MODEL = 'gemini-3.6-flash'
 
 /** Generous: the failure mode of too small is a reply truncated mid-JSON. */
 const DEFAULT_MAX_TOKENS = 8000
+
+/**
+ * How long one model gets before it is treated as unavailable.
+ *
+ * `fetch` has NO timeout of its own, and that is the whole reason the AI button
+ * appeared to do nothing: a model stopped answering rather than refusing, so
+ * the request sat open with nobody waiting on anything. A model that has not
+ * begun answering in this long is not going to; the chain moves on and the desk
+ * gets a document.
+ *
+ * Twenty seconds is generous by more than ten times — the models that work
+ * answer in about a second and a half — and it is deliberately generous,
+ * because cutting off a slow but healthy answer costs a real read.
+ */
+const REQUEST_TIMEOUT_MS = 20_000
 
 export interface AskOptions<T> {
   system: string
@@ -94,16 +120,16 @@ function toGeminiSchema(schema: Record<string, unknown>): Record<string, unknown
  * account, not assumed — four identical calls returned 503, 503, 503, 200.
  *
  * So one model is not enough. These are tried in order, each once, and the
- * first that answers wins. All four were verified working on this key; they are
- * ordered newest first, and every one is a flash model because this is a button
- * someone presses while a customer waits.
+ * first that answers wins. Ordered by what MEASURABLY answers rather than by
+ * version — see DEFAULT_MODEL — and every one is a flash model because this is
+ * a button someone presses while a customer waits.
  *
  * Only UNAVAILABLE moves to the next model. A quota error or a malformed
  * request will fail identically however many models it is sent to, and trying
  * four of them just makes the desk wait four times as long to read the same
  * sentence.
  */
-const MODEL_FALLBACKS = ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash-preview']
+const MODEL_FALLBACKS = ['gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-3.7-flash']
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -135,9 +161,15 @@ export async function askAi<T>(opts: AskOptions<T>): Promise<AiResult<T>> {
 async function askOnce<T>(key: string, opts: AskOptions<T>): Promise<AiResult<T>> {
   const model = opts.model ?? config.geminiModel ?? DEFAULT_MODEL
 
+  // fetch waits for ever by default, and "for ever" is exactly what one of
+  // these models started doing. The signal is what turns a hang into an answer
+  // the chain can act on.
+  const cutOff = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+
   try {
     const response = await fetch(`${ENDPOINT}/${model}:generateContent`, {
       method: 'POST',
+      signal: cutOff,
       headers: { 'x-goog-api-key': key, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: opts.system }] },
@@ -198,6 +230,18 @@ async function askOnce<T>(key: string, opts: AskOptions<T>): Promise<AiResult<T>
 
     return { ok: true, data: parsed.data }
   } catch (err) {
+    // A model that stops answering has to read as BUSY, not as a hard failure:
+    // "busy" is the one word askAi looks for to try the next model, and a
+    // timeout is precisely the case where the next model is worth trying. Get
+    // this wrong and the cut-off above just fails faster than it used to.
+    if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+      return {
+        ok: false,
+        reason: `The AI model ${model} is busy — it did not answer within ${
+          REQUEST_TIMEOUT_MS / 1000
+        } seconds.`,
+      }
+    }
     // A network blip, DNS, a malformed body — a sentence, not a stack.
     return { ok: false, reason: `Could not reach the AI service (${(err as Error).message}).` }
   }

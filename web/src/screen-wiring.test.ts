@@ -484,3 +484,43 @@ describe('downloading a quotation the screen has moved on from', () => {
     ).toBe(2)
   })
 })
+
+/**
+ * The seam between the browser and the server that is not code at all — it is
+ * two config files naming the same port, and for days they named different ones.
+ *
+ * vite.config.ts proxied /api to a hardcoded :4000 while .env said PORT=5050, so
+ * every request the browser made went to a port with nothing on it. The AI
+ * button did nothing, and it had been masked all along by a server left over
+ * from an earlier run that happened to still be sitting on 4000. Killing that
+ * stale process is what finally revealed it.
+ */
+describe('the port the browser is sent to', () => {
+  const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
+  const viteConfig = readFileSync(path.join(REPO, 'vite.config.ts'), 'utf8')
+
+  it('is read from the environment, never written down twice', () => {
+    const proxy = /['"]\/api['"]\s*:\s*(.+)/.exec(viteConfig)?.[1] ?? ''
+    expect(proxy, 'the /api proxy target was not found — has the config moved?').not.toBe('')
+
+    // A literal port here is the bug: it agrees with .env only by luck, and
+    // stops agreeing the moment somebody changes one of them.
+    expect(proxy, 'the proxy target hardcodes a port').not.toMatch(/localhost:\d+/)
+    expect(proxy).toContain('API_PORT')
+    expect(viteConfig, 'API_PORT is not taken from the environment').toMatch(
+      /API_PORT\s*=\s*Number\(process\.env\.PORT/,
+    )
+  })
+
+  it('falls back to the same default the server does', () => {
+    // Both sides must agree about what "unset" means, or an .env without PORT
+    // reintroduces exactly this split.
+    const serverConfig = readFileSync(path.join(REPO, 'server', 'src', 'config.ts'), 'utf8')
+    const serverDefault = /process\.env\.PORT\s*\?\?\s*(\d+)/.exec(serverConfig)?.[1]
+    const viteDefault = /process\.env\.PORT\s*\?\?\s*(\d+)/.exec(viteConfig)?.[1]
+
+    expect(serverDefault, 'the server default port was not found').toBeDefined()
+    expect(viteDefault, 'the proxy default port was not found').toBeDefined()
+    expect(viteDefault).toBe(serverDefault)
+  })
+})
