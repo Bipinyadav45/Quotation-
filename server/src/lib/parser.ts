@@ -209,11 +209,22 @@ export function extractPartCode(text: string): string {
 
 /** §5 — strip leading bullets/numbering and trailing `, - :` from the description. */
 function cleanDescription(text: string): string {
-  return text
-    .replace(/^[\s*•·\-–—]+/, '')
-    .replace(/^\(?\d{1,2}[.)]\s*/, '')
-    .replace(/[\s,\-–—:;]+$/, '')
-    .trim()
+  return (
+    text
+      .replace(/^[\s*•·\-–—]+/, '')
+      /**
+       * A list marker, NOT the whole number in front of a decimal point.
+       *
+       * The space is what tells them apart, and it used to be optional: `\s*`
+       * matched nothing, so "1.6 TB SAS 12G Drive" was read as a list item and
+       * came out "6 TB SAS 12G Drive" — a different drive, on a document a
+       * customer pays against. Every real list writes "1) " or "2. " with a
+       * space; nobody writes "1.6" meaning item one.
+       */
+      .replace(/^\(?\d{1,2}[.)]\s+/, '')
+      .replace(/[\s,\-–—:;]+$/, '')
+      .trim()
+  )
 }
 
 /**
@@ -234,6 +245,15 @@ const PREAMBLE_RE =
  * "find details below".
  */
 const BARE_REQUEST_RE = /^(?:pls|plz|please|kindly)?\s*(?:quotation for|quotation|quote)\b[\s:,-]*(.+)$/i
+
+/**
+ * "Kindly quote for the below:" names no product — it points at the list under
+ * it, which the parser reads line by line on its own. Taken at face value it
+ * put a line reading "for the below", quantity 1, on the quotation, above the
+ * three real products it was introducing.
+ */
+const POINTS_ELSEWHERE_RE =
+  /^(?:for\s+|as\s+per\s+|as\s+|kindly\s+|pls\s+|please\s+)*(?:the\s+)?(?:below|following|attached|under\s*mentioned|undermentioned|items?|products?|list|requirements?|enquiry|rates?|prices?|best\s+(?:rates?|prices?|offer))\b[\s.:,-]*$/i
 
 /** Instructions that trail a product name: "tft separately", "monitor also". */
 const TRAILING_INSTRUCTION_RE =
@@ -416,7 +436,10 @@ export function parseThreadDetailed(thread: string, options: ParseOptions = {}):
         // "Quote tft separately" — a product asked for with neither quantity
         // nor price. §5 discards it, which loses a line the customer asked for.
         const asked = BARE_REQUEST_RE.exec(raw)?.[1]
-        const askedFor = asked ? stripTrailingInstruction(cleanDescription(asked)) : ''
+        const cleaned = asked ? stripTrailingInstruction(cleanDescription(asked)) : ''
+        // A request that points at a list rather than naming a product is not a
+        // product. The list itself is read line by line just below.
+        const askedFor = POINTS_ELSEWHERE_RE.test(cleaned) ? '' : cleaned
         if (askedFor === '') {
           // Nothing matched yet. Hold it: the next line may be the quantity
           // belonging to a description that wrapped. Only three, so a long
@@ -563,7 +586,7 @@ export function parseThreadDetailed(thread: string, options: ParseOptions = {}):
       `Prices were read from message ${newestPricedBlock + 1} of ${blocks.length} in this thread. ` +
         `${newestPricedBlock} more recent message${newestPricedBlock === 1 ? '' : 's'} produced no price — ` +
         `if any of them revised it, these rates are out of date. Prices pasted as a table cannot be read; ` +
-        `check the newest message, or try "Read it with Claude instead".`,
+        `check the newest message, or try "Read it with AI instead".`,
     )
   }
 

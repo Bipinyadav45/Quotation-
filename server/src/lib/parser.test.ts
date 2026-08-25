@@ -633,3 +633,60 @@ describe('numbers that were silently misread', () => {
     expect(firstLength('Cable 1.5 mtr - Rs. 550')).toBe(1.5)
   })
 })
+
+describe('a numbered list beside a decimal number', () => {
+  const THREAD = [
+    'On Mon, Aug 25, 2026 at 10:02 AM Vishal Sharma <vishal.sharma@rosmerta.com> wrote:',
+    'Kindly quote for the below:',
+    '1) HP ProBook 440 G11, Core i5-1335U, 16GB, 512GB SSD  - 06 nos',
+    '2) Logitech MK540 Wireless Keyboard and Mouse Combo - 04 nos',
+    '3) 1.6 TB SAS 12G Drive (Refurbished) - 2 Nos',
+    'Regards, Vishal Sharma',
+    '',
+    'On Mon, Aug 25, 2026 at 12:40 PM rakhi gupte <rakhi.gupte@newtech.in> wrote:',
+    // No list marker on this one, which is what made it the real casualty:
+    // there was no "3) " to absorb the strip, so it took the "1." instead —
+    // and this is the PRICED line, the one that reaches the customer.
+    '1.6 TB SAS 12G Drive (Refurbished) - Rs. 20,000/- each',
+  ].join('\n')
+
+  it('keeps the whole number of a decimal in the product name', () => {
+    // "1.6 TB" was read as list item 1 and came out "6 TB SAS 12G Drive" — a
+    // different drive, on a document the customer pays against. The space after
+    // a real list marker is what tells the two apart.
+    const { lines } = parseThreadDetailed(THREAD)
+    const descs = lines.map((l) => l.desc)
+
+    expect(descs).toContain('1.6 TB SAS 12G Drive (Refurbished)')
+    // Both sides of the thread name it, and the priced one is what the
+    // customer is billed against.
+    expect(descs.filter((d) => d === '1.6 TB SAS 12G Drive (Refurbished)')).toHaveLength(2)
+    expect(descs.some((d) => d.startsWith('6 TB'))).toBe(false)
+  })
+
+  it('still strips the list markers themselves', () => {
+    const { lines } = parseThreadDetailed(THREAD)
+    for (const line of lines) expect(line.desc).not.toMatch(/^\(?\d{1,2}[.)]\s/)
+    expect(lines.filter((l) => l.role === 'request').map((l) => l.qty)).toEqual([6, 4, 2])
+  })
+
+  it('does not turn the line introducing the list into a product', () => {
+    // "Kindly quote for the below:" names nothing — it points at the three
+    // lines under it, which are read on their own. It used to become a fourth
+    // line reading "for the below".
+    const { lines, skipped } = parseThreadDetailed(THREAD)
+
+    expect(lines.filter((l) => l.role === 'request')).toHaveLength(3)
+    expect(lines.map((l) => l.desc).join(' ')).not.toContain('below')
+    // Surfaced rather than dropped, like everything else the parser sets aside.
+    expect(skipped.join(' ')).toContain('Kindly quote for the below')
+  })
+
+  it('still reads a request that really does name a product', () => {
+    // The guard must not swallow the case BARE_REQUEST_RE exists for.
+    const { lines } = parseThreadDetailed(
+      'On Mon, Aug 25, 2026 at 10:02 AM <buyer@customer.com> wrote:\nPlease quote 24 inch TFT monitor',
+    )
+    expect(lines.map((l) => l.desc)).toContain('24 inch TFT monitor')
+  })
+})
