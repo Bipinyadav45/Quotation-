@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import type { AiReadResponse, ParsedLine, ParseResponse, ResolvedCustomer } from '@shared/schema'
 import { SAMPLE_THREAD } from '@shared/sample'
-import { apiPost, useApi } from '../lib/api'
+import { ApiError, apiPost, useApi } from '../lib/api'
 import Callout from '../components/Callout'
+import ReadingProgress from '../components/ReadingProgress'
 import ScreenHeader from '../components/ScreenHeader'
 
 /**
@@ -85,7 +86,10 @@ export default function Source({ thread, onThreadChange, onRead }: Props) {
         thread,
       )
     } catch (err) {
-      setError((err as Error).message)
+      // Whatever went wrong, the desk gets a sentence and the thread they
+      // pasted. Nothing here clears the textarea: losing the thread on top of
+      // a failure is the one thing that would make this worse.
+      setError(readableFailure(err, mode))
     } finally {
       setBusy(null)
     }
@@ -195,14 +199,46 @@ export default function Source({ thread, onThreadChange, onRead }: Props) {
         </p>
       )}
 
-      {/* Anything either reader wants to say about what it did lands on the next
-          screen beside the quotation it affected, not here — this screen is gone
-          the moment the thread has been read. */}
+      {/* A wait with nothing moving reads as a hang, and a desk that thinks it
+          has hung presses again — which on the AI path spends a second request
+          out of twenty. */}
+      {busy !== null && <ReadingProgress mode={busy} />}
+
+      {/* Anything either reader wants to say about what it DID lands on the next
+          screen beside the quotation it affected. This is only for the case
+          where there is no next screen because nothing could be read. */}
       {error && (
-        <Callout tone="problem" label="Problem" className="mt-3">
+        <Callout tone="problem" label="Could not read the thread" className="mt-3">
           {error}
         </Callout>
       )}
     </div>
   )
+}
+
+/**
+ * A sentence the desk can act on, for the case where nothing came back at all.
+ *
+ * A failure INSIDE the read never gets here — the server answers 200 with the
+ * pattern parser's lines and a note, because half an answer beats an error
+ * page. This is only for the request that never completed, and the two ways
+ * that happens want different advice.
+ */
+export function readableFailure(err: unknown, mode: 'pattern' | 'ai'): string {
+  if (err instanceof ApiError && err.status === 0) {
+    // api.ts has already said the server is unreachable and what to check.
+    return err.message
+  }
+
+  if (err instanceof ApiError && err.issues?.length) {
+    return `The thread could not be read: ${err.issues.map((i) => i.message).join('; ')}.`
+  }
+
+  if (err instanceof ApiError) return err.message
+
+  const detail = err instanceof Error && err.message ? ` (${err.message})` : ''
+  return mode === 'ai'
+    ? `The AI reader did not answer${detail}. Your thread is still here — try ` +
+        '"Read the thread", which needs nothing but this machine.'
+    : `The thread could not be read${detail}. Your thread is still here — try again.`
 }

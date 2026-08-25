@@ -77,6 +77,46 @@
     @apply bg-paper-sunk text-ink-muted;
   }
 
+
+  /**
+   * The strip that runs while a thread is being read.
+   *
+   * A button reading "Reading with AI..." is not enough for a wait that can run
+   * to half a minute: nothing moves, so the desk assumes it has hung and presses
+   * again. This moves, which is the whole job.
+   *
+   * Indeterminate on purpose — the server cannot say how far through a model is,
+   * and a fake percentage that stalls at 90% is worse than an honest sweep.
+   */
+  .reading-track {
+    @apply relative h-[3px] w-full overflow-hidden bg-rule;
+  }
+
+  .reading-track::after {
+    content: '';
+    @apply absolute inset-y-0 left-0 w-1/3 bg-accent;
+    animation: reading-sweep 1.4s ease-in-out infinite;
+  }
+
+  @keyframes reading-sweep {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(400%); }
+  }
+
+  /**
+   * Someone who has asked for less motion still needs to know it is working, so
+   * the bar stays and pulses gently instead of travelling.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    .reading-track::after {
+      @apply w-full;
+      animation: reading-fade 1.8s ease-in-out infinite;
+    }
+    @keyframes reading-fade {
+      0%, 100% { opacity: 0.25; }
+      50% { opacity: 1; }
+    }
+  }
 }
 
 @media print {

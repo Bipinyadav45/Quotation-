@@ -16,11 +16,36 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * A request that never reached the server at all.
+ *
+ * `fetch` rejects with a bare "Failed to fetch" for every one of these — the
+ * server not running, the dev proxy pointed at the wrong port, the machine
+ * asleep — and that sentence went straight to the screen. It says nothing a
+ * desk can act on, and it was on screen for a whole afternoon while the actual
+ * fault was a proxy aimed at a port with nothing on it.
+ *
+ * Status 0, so callers can tell "never arrived" from "arrived and was refused".
+ */
+function unreachable(err: unknown): ApiError {
+  const detail = err instanceof Error && err.message ? ` (${err.message})` : ''
+  return new ApiError(
+    `Could not reach the Quotation Desk server${detail}. It may have stopped — ` +
+      'check the window it is running in, then try again.',
+    0,
+  )
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
-    ...init,
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
-  })
+  let res: Response
+  try {
+    res = await fetch(path, {
+      ...init,
+      headers: { 'Content-Type': 'application/json', ...init?.headers },
+    })
+  } catch (err) {
+    throw unreachable(err)
+  }
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}) as Record<string, unknown>)

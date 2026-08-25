@@ -524,3 +524,61 @@ describe('the port the browser is sent to', () => {
     expect(viteDefault).toBe(serverDefault)
   })
 })
+
+/**
+ * What the desk is told when a read never completes.
+ *
+ * A failure INSIDE the read never reaches this: the server answers 200 with the
+ * deterministic parser's lines and a note, because half an answer beats an
+ * error page. This is only the request that never came back — and for a whole
+ * afternoon that showed as the browser's own "Failed to fetch", which says
+ * nothing anyone can act on while the actual fault was a proxy aimed at a port
+ * with nothing listening on it.
+ */
+describe('what a failed read says', () => {
+  it('names the server, not the fetch, when nothing answered', async () => {
+    const { ApiError } = await import('./lib/api')
+    const { readableFailure } = await import('./pages/Source')
+
+    const said = readableFailure(new ApiError('Could not reach the Quotation Desk server (fetch failed). It may have stopped — check the window it is running in, then try again.', 0), 'ai')
+
+    expect(said).toContain('Could not reach the Quotation Desk server')
+    expect(said).not.toContain('TypeError')
+    expect(said.toLowerCase()).not.toContain('failed to fetch.')
+  })
+
+  it('reads a validation complaint back in the words the server used', async () => {
+    const { ApiError } = await import('./lib/api')
+    const { readableFailure } = await import('./pages/Source')
+
+    const said = readableFailure(
+      new ApiError('Invalid request body', 400, [
+        { path: 'thread', message: 'Paste an email thread first' },
+      ]),
+      'pattern',
+    )
+
+    expect(said).toContain('Paste an email thread first')
+    expect(said).not.toContain('Invalid request body')
+  })
+
+  it('points an AI failure at the reader that needs nothing but this machine', async () => {
+    const { readableFailure } = await import('./pages/Source')
+
+    const said = readableFailure(new TypeError('fetch failed'), 'ai')
+
+    expect(said).toContain('Read the thread')
+    // The thread is the desk's work. Saying it is still there is the difference
+    // between a setback and a loss.
+    expect(said).toContain('still here')
+  })
+
+  it('does not send the plain reader somewhere that needs a key', async () => {
+    const { readableFailure } = await import('./pages/Source')
+
+    const said = readableFailure(new TypeError('fetch failed'), 'pattern')
+
+    expect(said).not.toContain('AI')
+    expect(said).toContain('still here')
+  })
+})
