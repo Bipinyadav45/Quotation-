@@ -166,18 +166,37 @@ async function convertWithLibreOffice(
  * A script file rather than -Command so paths with spaces, ampersands and
  * apostrophes cannot break the quoting — the letterhead's own filename has all
  * three. Word is opened read-only with alerts suppressed so it can never sit
- * waiting on a dialog nobody can see, and the finally block quits it even when
- * the export throws, so an exception does not leave WINWORD.EXE resident.
+ * waiting on a dialog nobody can see.
+ *
+ * THE FINALLY BLOCK IS NOT ENOUGH, and believing it was cost a source file.
+ * Word is started by COM, so it is NOT a child of this PowerShell — it is its
+ * own process, owned by DCOM. `killTree` on a timeout therefore kills the
+ * script and leaves WINWORD.EXE running, and so does killing the server while a
+ * conversion is in flight. Two hundred and eighty-two of them had accumulated
+ * on this machine over four days, each quietly writing Office telemetry into
+ * %TEMP%\Diagnostics until it reached 12.7 GB, filled the disk, and truncated
+ * a file mid-write.
+ *
+ * So the script records the PID of the Word it started, and the caller kills
+ * that PID if it is still there when the conversion ends — however it ended.
  */
 async function convertWithWord(inputPath: string, outputPath: string, jobDir: string): Promise<void> {
   const scriptPath = path.join(jobDir, 'convert.ps1')
+  const pidPath = path.join(jobDir, 'word.pid')
 
   const script = `
 $ErrorActionPreference = 'Stop'
 $word = $null
 $doc = $null
+# Which WINWORD processes existed before we started one. The queue runs at
+# concurrency 1, so anything new between these two lines is ours — and a copy
+# of Word the desk opened themselves is never in the difference.
+$before = @(Get-Process WINWORD -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
 try {
   $word = New-Object -ComObject Word.Application
+  @(Get-Process WINWORD -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id) |
+    Where-Object { $_ -notin $before } |
+    Set-Content -Path ${psString(pidPath)} -Encoding ascii
   $word.Visible = $false
   $word.DisplayAlerts = 0
   $doc = $word.Documents.Open(
@@ -199,14 +218,48 @@ try {
 
   writeFileSync(scriptPath, script, 'utf8')
 
-  await run('powershell', [
-    '-NoProfile',
-    '-NonInteractive',
-    '-ExecutionPolicy',
-    'Bypass',
-    '-File',
-    scriptPath,
-  ])
+  try {
+    await run('powershell', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      scriptPath,
+    ])
+  } finally {
+    // However that ended — cleanly, by throwing, or by being killed on the
+    // timeout — the Word it started is not a child of it and will outlive it
+    // otherwise.
+    reapWord(pidPath)
+  }
+}
+
+/**
+ * Kill the Word instance a conversion started, if it is still there.
+ *
+ * Reads the PID the script wrote rather than guessing from process names, so a
+ * copy of Word the desk has open with unsaved work is never a candidate. A PID
+ * that has already exited is the ordinary case and not an error.
+ */
+function reapWord(pidPath: string): void {
+  let recorded: string
+  try {
+    recorded = readFileSync(pidPath, 'utf8')
+  } catch {
+    return // the script never got as far as starting Word
+  }
+
+  for (const line of recorded.split(/\r?\n/)) {
+    const pid = Number(line.trim())
+    if (!Number.isInteger(pid) || pid <= 0) continue
+    try {
+      process.kill(pid, 'SIGKILL')
+      console.warn(`[pdf] Word ${pid} outlived its conversion and was stopped`)
+    } catch {
+      // Already gone, which is what the finally block in the script is for.
+    }
+  }
 }
 
 /** Single-quoted PowerShell literal — the only escape needed is a doubled quote. */

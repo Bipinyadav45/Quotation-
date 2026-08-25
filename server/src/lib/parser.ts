@@ -78,6 +78,39 @@ const RATE_PATTERNS: RegExp[] = [
   /@\s*([\d,]+(?:\.\d{1,2})?)(?!\s*(?:nos?|pcs?|pieces?|units?|sets?)\b)/i,
 ]
 
+/**
+ * "Rs. 1.5 lakh" is 150,000 rupees, not one rupee fifty.
+ *
+ * The rate patterns capture the digits and stop, so the word after them was
+ * simply dropped and a 1.5 lakh UPS was quoted at RS 1.50 on a document the
+ * customer pays against. Indian prices are written this way constantly and the
+ * multiplier is unambiguous, so it is read rather than refused.
+ *
+ * Anchored to the end of the captured number, so the word appearing anywhere
+ * else on the line cannot multiply an unrelated figure. The word boundary on
+ * "cr" is load-bearing: without it, it matches the start of "cream".
+ */
+const SCALE_WORDS: Array<[RegExp, number]> = [
+  [/^\s*(?:lakhs?|lacs?)\b/i, 100_000],
+  [/^\s*(?:crores?|cr)\b\.?/i, 10_000_000],
+]
+
+/** The rate a line states, in integer paise, with any scale word applied. */
+function rateFrom(match: RegExpExecArray | null): number {
+  if (!match?.[1]) return 0
+
+  const base = parseRupeesToPaise(match[1])
+  if (base === null) return 0
+
+  const after = match.input.slice(match.index + match[0].length)
+  for (const [word, multiplier] of SCALE_WORDS) {
+    // Integers throughout: base is already paise and the multiplier is whole,
+    // so nothing here can drift the way a float would.
+    if (word.test(after)) return base * multiplier
+  }
+  return base
+}
+
 /** First rate marker on the line, or null. */
 function matchRate(text: string): RegExpExecArray | null {
   for (const pattern of RATE_PATTERNS) {
@@ -117,7 +150,7 @@ const FILESIZE_RE = /^\(?~?\s*[\d.,]+\s*(?:bytes|kb|mb|gb)\s*\)?$/i
  * quotation as a line item called "Total", at the price of the whole order.
  */
 const SUMMARY_ROW_RE =
-  /^(?:sub\s*total|grand\s*total|net\s*total|total|amount|gst|tax|vat|discount|freight|packing|round\s*off|less)\b/i
+  /^(?:sub\s*total|grand\s*total|net\s*total|net|total|amount|gst|tax|vat|discount|freight|packing|forwarding|insurance|round\s*off|less|add)\b/i
 
 /**
  * A sign-off. Everything after one, within the same block, is signature — the
@@ -211,6 +244,12 @@ export function extractPartCode(text: string): string {
 function cleanDescription(text: string): string {
   return (
     text
+      /**
+       * Quote markers first, and repeatedly. A thread forwarded twice arrives
+       * with "> > " in front of every line, and one pass left the second marker
+       * standing in the product name on the document.
+       */
+      .replace(/^(?:[>|]+\s*)+/, '')
       .replace(/^[\s*•·\-–—]+/, '')
       /**
        * A list marker, NOT the whole number in front of a decimal point.
@@ -222,6 +261,17 @@ function cleanDescription(text: string): string {
        * space; nobody writes "1.6" meaning item one.
        */
       .replace(/^\(?\d{1,2}[.)]\s+/, '')
+      /**
+       * Lettered and roman markers, which enquiries use as often as numbers:
+       * "a) Dell OptiPlex", "iii. Logitech MX Master". They were printing on
+       * the quotation as part of the product name.
+       *
+       * Deliberately narrow. A single letter, or a run of roman numerals, and
+       * nothing else — "PC) something" is not a list marker, and neither is the
+       * "C)" of a part code. The same space rule as the numbers above applies,
+       * so "a.b.c switch" keeps its name.
+       */
+      .replace(/^\(?(?:[a-z]|[ivx]{1,4})[.)]\s+/i, '')
       .replace(/[\s,\-–—:;]+$/, '')
       .trim()
   )
@@ -474,11 +524,17 @@ export function parseThreadDetailed(thread: string, options: ParseOptions = {}):
       }
 
       const qty = readCount(qtyMatch?.[1])
-      const rate = rateMatch?.[1] ? (parseRupeesToPaise(rateMatch[1]) ?? 0) : 0
+      const rate = rateFrom(rateMatch)
 
       // §5 — "Description = the text before the Qty match". When a line carries
       // only a price, fall back to the text before the rate.
-      const cutAt = qtyMatch?.index ?? rateMatch?.index ?? raw.length
+      // WHICHEVER COMES FIRST. Reading the quantity first regardless left the
+      // price standing in the name whenever it was written before the quantity:
+      // "HP ProBook 440 G11 - Rs. 68,500 each - 6 nos" printed as a product
+      // called "HP ProBook 440 G11 - Rs. 68,500 each", with the price then
+      // repeated in the Rate column beside it.
+      const marks = [qtyMatch?.index, rateMatch?.index].filter((i) => i !== undefined)
+      const cutAt = marks.length > 0 ? Math.min(...marks) : raw.length
       let desc = cleanDescription(raw.slice(0, cutAt))
 
       // ...but when the text before the quantity is only an instruction —
