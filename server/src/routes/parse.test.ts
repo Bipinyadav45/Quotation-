@@ -4,33 +4,30 @@ import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AiReadResponseSchema, type ParseResponse } from '@shared/schema.js'
 import type { AiResult } from '../lib/ai.js'
-import type { ExtractionResult } from '../lib/extractCustomer.js'
+import type { ThreadRead } from '../lib/readThread.js'
 import { parseRoutes } from './parse.js'
 
 /**
- * POST /parse/ai reads the lines and the customer in one pass, from two calls
- * that fail independently. What is tested here is the four ways that can land:
- * both halves working, either one working alone, and neither. In all four the
- * answer is 200 and the desk keeps whatever worked — an AI feature failing is
- * not an error page in a tool people quote from.
+ * POST /parse/ai reads the lines and the customer in ONE call, and what is
+ * tested here is every way that call can land: it works; it fails; it throws
+ * on the database it touches; it succeeds but finds no products. In all four
+ * the answer is 200 and the desk keeps whatever worked — an AI feature failing
+ * is not an error page in a tool people quote from.
  *
- * The model is never called. Both halves are stubbed at the module boundary,
- * but resolveCustomer is left real: the merging is the part worth exercising
- * through the route.
+ * It used to be two calls, and this file used to prove they failed
+ * independently. They no longer can, and that is the point: two calls cost two
+ * to eight requests per press against a twenty-a-day allowance. What survives
+ * is the guarantee that mattered — lines on the screen whatever went wrong.
+ *
+ * The model is never called: readThreadWithAi is stubbed at the module
+ * boundary. resolveCustomer is left real, because merging the read against the
+ * customer master is the part worth exercising through the route.
  */
-const stub = vi.hoisted(() => ({
-  parseThreadWithClaude: vi.fn(),
-  extractCustomerFromThread: vi.fn(),
-}))
+const stub = vi.hoisted(() => ({ readThreadWithAi: vi.fn() }))
 
-vi.mock('../lib/llmParser.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../lib/llmParser.js')>()),
-  parseThreadWithClaude: stub.parseThreadWithClaude,
-}))
-
-vi.mock('../lib/extractCustomer.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../lib/extractCustomer.js')>()),
-  extractCustomerFromThread: stub.extractCustomerFromThread,
+vi.mock('../lib/readThread.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/readThread.js')>()),
+  readThreadWithAi: stub.readThreadWithAi,
 }))
 
 const THREAD = 'Please quote 10 x Logitech MK540 keyboard mouse combo.'
@@ -65,19 +62,25 @@ const PATTERN_FALLBACK: ParseResponse = {
   note: NO_KEY + ' The pattern parser was used instead.',
 }
 
-const CUSTOMER_READ: AiResult<ExtractionResult> = {
+const EXTRACTED = {
+  name: 'Zensar Technologies',
+  address: 'Kharadi, Pune 411014',
+  attention: 'Ms. Priya Nair',
+  gstin: '27AABCU9603R1ZM',
+  state: 'Maharashtra',
+  confidence: 'high',
+} as const
+
+/** The whole read, as one call now answers it. */
+const GOOD_READ: AiResult<ThreadRead> = {
   ok: true,
-  data: {
-    extracted: {
-      name: 'Zensar Technologies',
-      address: 'Kharadi, Pune 411014',
-      attention: 'Ms. Priya Nair',
-      gstin: '27AABCU9603R1ZM',
-      state: 'Maharashtra',
-      confidence: 'high',
-    },
-    onFile: null,
-  },
+  data: { lines: LLM_LINES.lines, rejected: [], extracted: { ...EXTRACTED }, onFile: null },
+}
+
+/** The same read, but the thread named products nowhere. */
+const NO_LINES: AiResult<ThreadRead> = {
+  ok: true,
+  data: { lines: [], rejected: [], extracted: { ...EXTRACTED }, onFile: null },
 }
 
 let server: Server
@@ -97,8 +100,7 @@ afterAll(() => {
 })
 
 beforeEach(() => {
-  stub.parseThreadWithClaude.mockReset()
-  stub.extractCustomerFromThread.mockReset()
+  stub.readThreadWithAi.mockReset()
 })
 
 function post(thread: string) {
@@ -116,9 +118,8 @@ async function readWithAi() {
 }
 
 describe('POST /parse/ai', () => {
-  it('returns both halves when both succeed', async () => {
-    stub.parseThreadWithClaude.mockResolvedValue(LLM_LINES)
-    stub.extractCustomerFromThread.mockResolvedValue(CUSTOMER_READ)
+  it('returns the lines and the customer when the read works', async () => {
+    stub.readThreadWithAi.mockResolvedValue(GOOD_READ)
 
     const { status, body } = await readWithAi()
 
@@ -138,9 +139,20 @@ describe('POST /parse/ai', () => {
     expect(body.customerNote).toBeUndefined()
   })
 
-  it('keeps the lines when the customer read fails', async () => {
-    stub.parseThreadWithClaude.mockResolvedValue(LLM_LINES)
-    stub.extractCustomerFromThread.mockResolvedValue({
+  it('costs exactly one request, however many halves the answer has', async () => {
+    // The whole reason this route stopped making two calls. A press that costs
+    // two is a press the free tier allows ten of a day, and the desk ran out
+    // twice believing the key was at fault.
+    stub.readThreadWithAi.mockResolvedValue(GOOD_READ)
+
+    await readWithAi()
+
+    expect(stub.readThreadWithAi).toHaveBeenCalledTimes(1)
+    expect(stub.readThreadWithAi).toHaveBeenCalledWith(THREAD)
+  })
+
+  it('still gives the desk lines when the read fails', async () => {
+    stub.readThreadWithAi.mockResolvedValue({
       ok: false,
       reason: 'The AI quota for this key is used up for now.',
     })
@@ -148,46 +160,45 @@ describe('POST /parse/ai', () => {
     const { status, body } = await readWithAi()
 
     expect(status).toBe(200)
-    expect(body.source).toBe('llm')
-    expect(body.lines).toHaveLength(1)
+    expect(body.source).toBe('pattern')
+    expect(body.note).toContain('The AI quota for this key is used up for now.')
+    expect(body.note).toContain('pattern parser')
     // null, not an all-blank record: the read FAILED, which is a different
     // situation from a thread that named nobody, and nothing is known to be
     // missing because nothing was read.
     expect(body.customer).toBeNull()
-    expect(body.customerNote).toBe('The AI quota for this key is used up for now.')
     expect(body.customerMissing).toEqual([])
   })
 
-  it('keeps the lines when the customer read throws', async () => {
-    // The customer half touches the database. Promise.all would let a locked
-    // database take the line items down with it; allSettled does not.
-    stub.parseThreadWithClaude.mockResolvedValue(LLM_LINES)
-    stub.extractCustomerFromThread.mockRejectedValue(new Error('database is locked'))
-
-    const { status, body } = await readWithAi()
-
-    expect(status).toBe(200)
-    expect(body.lines).toHaveLength(1)
-    expect(body.customer).toBeNull()
-    expect(body.customerNote).toContain('database is locked')
-  })
-
-  it('keeps the customer when the lines fall back to the pattern parser', async () => {
-    stub.parseThreadWithClaude.mockResolvedValue(PATTERN_FALLBACK)
-    stub.extractCustomerFromThread.mockResolvedValue(CUSTOMER_READ)
+  it('still gives the desk lines when the read throws', async () => {
+    // The read touches the database through matchOnFile. A locked database must
+    // not cost the desk its line items.
+    stub.readThreadWithAi.mockRejectedValue(new Error('database is locked'))
 
     const { status, body } = await readWithAi()
 
     expect(status).toBe(200)
     expect(body.source).toBe('pattern')
-    expect(body.note).toBe(PATTERN_FALLBACK.note)
+    expect(body.note).toContain('database is locked')
+    expect(body.customer).toBeNull()
+  })
+
+  it('keeps the customer when the thread named no products', async () => {
+    // Half an answer is still worth having: the address block fills itself even
+    // though the lines have to be typed.
+    stub.readThreadWithAi.mockResolvedValue(NO_LINES)
+
+    const { status, body } = await readWithAi()
+
+    expect(status).toBe(200)
+    expect(body.source).toBe('pattern')
+    expect(body.note).toContain('found no line items')
     expect(body.customer?.name).toBe('Zensar Technologies')
     expect(body.customerNote).toBeUndefined()
   })
 
-  it('states a shared failure once when both halves fail for the same reason', async () => {
-    stub.parseThreadWithClaude.mockResolvedValue(PATTERN_FALLBACK)
-    stub.extractCustomerFromThread.mockResolvedValue({ ok: false, reason: NO_KEY })
+  it('states a shared failure once rather than once per half', async () => {
+    stub.readThreadWithAi.mockResolvedValue({ ok: false, reason: NO_KEY })
 
     const { status, body } = await readWithAi()
 
@@ -203,12 +214,11 @@ describe('POST /parse/ai', () => {
     expect(body.customerNote).toBeTruthy()
   })
 
-  it('rejects an empty thread before either half is called', async () => {
+  it('rejects an empty thread before the model is asked anything', async () => {
     const response = await post('')
 
     expect(response.status).toBe(400)
-    expect(stub.parseThreadWithClaude).not.toHaveBeenCalled()
-    expect(stub.extractCustomerFromThread).not.toHaveBeenCalled()
+    expect(stub.readThreadWithAi).not.toHaveBeenCalled()
   })
 })
 

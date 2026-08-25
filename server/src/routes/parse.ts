@@ -2,14 +2,9 @@ import { Router } from 'express'
 import { ParseRequestSchema, type AiReadResponse, type ParseResponse } from '@shared/schema.js'
 import { validateBody, validated } from '../middleware/validate.js'
 import { parseThreadDetailed } from '../lib/parser.js'
-import { parseThreadWithClaude } from '../lib/llmParser.js'
+import { readThreadWithAi, type ThreadRead } from '../lib/readThread.js'
 import { validityFromThread } from '../lib/validity.js'
-import {
-  INTERNAL_EMAIL_DOMAINS,
-  extractCustomerFromThread,
-  resolveCustomer,
-  type ExtractionResult,
-} from '../lib/extractCustomer.js'
+import { INTERNAL_EMAIL_DOMAINS, resolveCustomer } from '../lib/extractCustomer.js'
 import { aiAvailable, type AiResult } from '../lib/ai.js'
 
 export const parseRoutes = Router()
@@ -58,16 +53,19 @@ function suggestedValidity(thread: string): { suggestedValidity?: string } {
 parseRoutes.post('/parse/ai', validateBody(ParseRequestSchema), async (req, res) => {
   const { thread } = validated(ParseRequestSchema, req)
 
-  // allSettled rather than all: the customer half touches the database, and a
-  // throw there would otherwise reject the pair and take the line items down
-  // with it — the one half the desk cannot work without.
-  const [linesRead, customerRead] = await Promise.allSettled([
-    parseThreadWithClaude(thread),
-    extractCustomerFromThread(thread),
-  ])
+  // ONE call for both halves. It was two, fired together, each walking a
+  // fallback chain of up to four models — between two and eight requests for a
+  // single press, against a free tier that allows twenty a day. The desk ran
+  // out twice and replaced a healthy key both times.
+  //
+  // Wrapped rather than awaited bare: readThreadWithAi touches the database
+  // through matchOnFile, and a throw there must still leave the desk with line
+  // items from the deterministic parser.
+  const read = await Promise.allSettled([readThreadWithAi(thread)])
+  const outcome = read[0]!
 
-  const parsed = linesFrom(linesRead, thread)
-  const customer = sayTheReasonOnce(parsed, customerHalf(customerRead))
+  const parsed = linesFrom(outcome, thread)
+  const customer = sayTheReasonOnce(parsed, customerHalf(outcome))
 
   const body: AiReadResponse = { ...parsed, ...suggestedValidity(thread), ...customer }
   res.json(body)
@@ -109,20 +107,33 @@ function messageOf(err: unknown): string {
 }
 
 /**
- * parseThreadWithClaude already turns every AI failure into the pattern
- * parser's result with a note, so the only way it rejects is a genuine throw.
- * Even then the deterministic parser still runs and the desk still gets lines.
+ * The line half of the reply.
+ *
+ * §5's rule, unchanged by the merge into one call: on ANY failure the desk gets
+ * the deterministic parser's lines and a sentence saying why — never an error
+ * page, and never an empty screen.
  */
-function linesFrom(outcome: PromiseSettledResult<ParseResponse>, thread: string): ParseResponse {
-  if (outcome.status === 'fulfilled') return outcome.value
+function linesFrom(outcome: PromiseSettledResult<AiResult<ThreadRead>>, thread: string): ParseResponse {
+  const fallback = (note: string): ParseResponse => {
+    const { lines, skipped, warnings } = parseThreadDetailed(thread)
+    return { lines, source: 'pattern', note, skipped, warnings }
+  }
 
-  const { lines, skipped, warnings } = parseThreadDetailed(thread)
+  if (outcome.status === 'rejected') {
+    return fallback(`${messageOf(outcome.reason)} The pattern parser was used instead.`)
+  }
+  if (!outcome.value.ok) {
+    return fallback(`${outcome.value.reason} The pattern parser was used instead.`)
+  }
+  if (outcome.value.data.lines.length === 0) {
+    return fallback('The AI found no line items, so the pattern parser was used instead.')
+  }
+
   return {
-    lines,
-    source: 'pattern',
-    skipped,
-    warnings,
-    note: `${messageOf(outcome.reason)} The pattern parser was used instead.`,
+    lines: outcome.value.data.lines,
+    source: 'llm',
+    skipped: outcome.value.data.rejected,
+    warnings: [],
   }
 }
 
@@ -143,7 +154,7 @@ function customerFailed(reason: string): CustomerHalf {
   }
 }
 
-function customerHalf(outcome: PromiseSettledResult<AiResult<ExtractionResult>>): CustomerHalf {
+function customerHalf(outcome: PromiseSettledResult<AiResult<ThreadRead>>): CustomerHalf {
   if (outcome.status === 'rejected') {
     return customerFailed(`The customer details could not be read (${messageOf(outcome.reason)}).`)
   }

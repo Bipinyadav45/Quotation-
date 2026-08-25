@@ -1,11 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CustomerRecord } from './customers.js'
-import {
-  INTERNAL_EMAIL_DOMAINS,
-  extractCustomerFromThread,
-  resolveCustomer,
-  type ExtractedCustomer,
-} from './extractCustomer.js'
+import { INTERNAL_EMAIL_DOMAINS, resolveCustomer, type ExtractedCustomer } from './extractCustomer.js'
+import { clearReadCache, readThreadWithAi } from './readThread.js'
 
 /**
  * resolveCustomer is the last thing between a model's reading of an email
@@ -40,6 +36,10 @@ vi.mock('./customers.js', async (importOriginal) => ({
 
 beforeEach(() => {
   askAi.mockReset()
+  // The reader remembers answers by thread text, and every test here uses the
+  // same thread — without this the second one would read a cached answer meant
+  // for the first.
+  clearReadCache()
   // Nothing on file unless a test says so.
   findCustomerByName.mockReset().mockReturnValue(null)
   searchCustomers.mockReset().mockReturnValue([])
@@ -70,8 +70,13 @@ const file = (over: Partial<CustomerRecord> = {}): CustomerRecord => ({
 })
 
 /** Stub the model's answer, so a test can talk about the name it came back with. */
+/**
+ * One call answers with the lines AND the customer now, so the stub has to
+ * carry both. The lines are irrelevant here and stay empty; what these tests
+ * are about is what happens to the customer on the way out.
+ */
 const reads = (over: Partial<ExtractedCustomer>): void => {
-  askAi.mockResolvedValue({ ok: true, data: read(over) })
+  askAi.mockResolvedValue({ ok: true, data: { lines: [], customer: read(over) } })
 }
 
 const THREAD = 'Please quote 10 x MK540.'
@@ -237,16 +242,19 @@ describe('the internal-domain guard', () => {
     askAi.mockResolvedValue({
       ok: true,
       data: {
-        name: 'Solaris Trading',
-        address: 'Unit 4, Powai, Mumbai\nsales@newtech.co.in',
-        attention: 'Mr. R Gupta',
-        gstin: '27AABCU9603R1ZM',
-        state: 'Maharashtra',
-        confidence: 'high',
+        lines: [],
+        customer: {
+          name: 'Solaris Trading',
+          address: 'Unit 4, Powai, Mumbai\nsales@newtech.co.in',
+          attention: 'Mr. R Gupta',
+          gstin: '27AABCU9603R1ZM',
+          state: 'Maharashtra',
+          confidence: 'high',
+        },
       },
     })
 
-    const result = await extractCustomerFromThread('Please quote 10 x MK540.')
+    const result = await readThreadWithAi('Please quote 10 x MK540.')
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -468,7 +476,7 @@ describe('matching a thread name against the customer master', () => {
     findCustomerByName.mockReturnValue(record)
     reads({ name: 'Zensar Technologies' })
 
-    const result = await extractCustomerFromThread(THREAD)
+    const result = await readThreadWithAi(THREAD)
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -481,7 +489,7 @@ describe('matching a thread name against the customer master', () => {
     searchCustomers.mockReturnValue([record])
     reads({ name: 'Datamatics Global Services' })
 
-    const result = await extractCustomerFromThread(THREAD)
+    const result = await readThreadWithAi(THREAD)
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -502,7 +510,7 @@ describe('matching a thread name against the customer master', () => {
     ])
     reads({ name: 'Kirloskar', address: 'Powai, Mumbai', gstin: '27AABCU9603R1ZM' })
 
-    const result = await extractCustomerFromThread(THREAD)
+    const result = await readThreadWithAi(THREAD)
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -522,7 +530,7 @@ describe('matching a thread name against the customer master', () => {
     searchCustomers.mockReturnValue([wrong, right])
     reads({ name: 'Kirloskar Brothers' })
 
-    const result = await extractCustomerFromThread(THREAD)
+    const result = await readThreadWithAi(THREAD)
 
     expect(result.ok).toBe(true)
     if (!result.ok) return

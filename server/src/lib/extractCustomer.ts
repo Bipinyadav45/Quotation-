@@ -36,32 +36,6 @@ export const ExtractedCustomerSchema = z.object({
 })
 export type ExtractedCustomer = z.infer<typeof ExtractedCustomerSchema>
 
-const OUTPUT_SCHEMA = {
-  type: 'object',
-  properties: {
-    name: { type: 'string', description: 'The customer company name. "" if not stated.' },
-    address: {
-      type: 'string',
-      description: 'The customer postal address, newline separated. "" if not stated.',
-    },
-    attention: {
-      type: 'string',
-      description: 'The person to address it to, e.g. "Mr. Mahesh Jathar". "" if not stated.',
-    },
-    gstin: { type: 'string', description: 'Their 15-character GSTIN. "" if not stated.' },
-    state: {
-      type: 'string',
-      description: 'Their Indian state, spelled in full, e.g. "Karnataka". "" if not stated.',
-    },
-    confidence: {
-      type: 'string',
-      enum: ['high', 'medium', 'low'],
-      description: 'How clearly the thread identified the customer.',
-    },
-  },
-  required: ['name', 'address', 'attention', 'gstin', 'state', 'confidence'],
-  additionalProperties: false,
-} as const
 
 /**
  * Newtech's own mail domains, all of them.
@@ -82,63 +56,6 @@ export const INTERNAL_EMAIL_DOMAINS: readonly string[] = [
   config.internalEmailDomain,
   ...ALIAS_DOMAINS,
 ].filter((domain, index, all) => domain !== '' && all.indexOf(domain) === index)
-
-export interface ExtractionResult {
-  extracted: ExtractedCustomer
-  /**
-   * The matching row from the customer master, when there is one.
-   *
-   * A stored record beats a fresh read of an email footer every time: it was
-   * confirmed by someone saving a quotation with it, and a GSTIN read out of a
-   * signature is a suggestion, not a verification.
-   */
-  onFile: CustomerRecord | null
-}
-
-export async function extractCustomerFromThread(
-  thread: string,
-): Promise<AiResult<ExtractionResult>> {
-  const ours = INTERNAL_EMAIL_DOMAINS.map((d) => `"@${d}"`).join(' or ')
-
-  const system = `You read B2B email threads at an Indian IT hardware reseller and pull out the CUSTOMER's details.
-
-The reseller is Newtech Computer Services Pvt. Ltd. Their email addresses end in
-${ours}. Their signature block appears in almost every message, often several
-times, and their address is 6th Floor, Solaris-II, Saki Vihar Road, Powai, Mumbai.
-
-NEVER return Newtech's details. You want the other party — whoever is asking for a quotation.
-
-Rules:
-- Copy values exactly as written. Do not correct, expand or reformat them.
-- A field you cannot find is "", never a guess. An invented address on a
-  quotation is worse than a blank one someone types.
-- "attention" is the individual the quotation should be addressed to, with any
-  honorific, as the thread writes it.
-- "state" is the Indian state, spelled in full. Infer it from the city only
-  when the city is unambiguous (Bengaluru -> Karnataka, Powai -> Maharashtra).
-- "gstin" is 15 characters. If you cannot see one, "".
-- confidence: "high" when the thread clearly identifies one customer,
-  "medium" when you had to infer, "low" when you are unsure who the customer is.`
-
-  const result = await askAi({
-    system,
-    user: thread,
-    outputSchema: OUTPUT_SCHEMA,
-    validate: ExtractedCustomerSchema,
-    effort: 'low',
-  })
-
-  if (!result.ok) return result
-
-  const extracted = result.data
-  const guard = rejectOwnDetails(extracted)
-
-  // Prefer what we already hold, but only when it is the same company.
-  // matchOnFile is where "the same company" is decided.
-  const onFile = guard.name.trim() === '' ? null : matchOnFile(guard.name)
-
-  return { ok: true, data: { extracted: guard, onFile } }
-}
 
 /**
  * How alike two names have to be before a stored record is treated as the same
@@ -173,7 +90,7 @@ const NAME_MATCH_THRESHOLD = 0.75
  * effort: the thread's own values then stand, which is what the customer
  * actually wrote.
  */
-function matchOnFile(name: string): CustomerRecord | null {
+export function matchOnFile(name: string): CustomerRecord | null {
   const exact = findCustomerByName(name)
   if (exact) return exact
 
@@ -194,7 +111,7 @@ function matchOnFile(name: string): CustomerRecord | null {
  * Last line of defence. The prompt says not to return Newtech's details; this
  * makes sure a slip cannot put our own address on a quotation addressed to us.
  */
-function rejectOwnDetails(c: ExtractedCustomer): ExtractedCustomer {
+export function rejectOwnDetails(c: ExtractedCustomer): ExtractedCustomer {
   const haystack = [c.name, c.address, c.attention].join('\n').toLowerCase()
   const looksInternal =
     /newtech/i.test(c.name) ||

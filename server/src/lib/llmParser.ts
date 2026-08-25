@@ -1,4 +1,9 @@
-import { LlmParseResultSchema, type ParsedLine, type ParseResponse } from '@shared/schema.js'
+import {
+  LlmParseResultSchema,
+  type LlmParseResult,
+  type ParsedLine,
+  type ParseResponse,
+} from '@shared/schema.js'
 import { parseRupeesToPaise } from '@shared/money.js'
 import { askAi } from './ai.js'
 import { looksLikeSpecification, parseThreadDetailed } from './parser.js'
@@ -151,31 +156,22 @@ export function splitSingleLineDescription(desc: string): string {
   return `${words.slice(0, at).join(' ')}\n${words.slice(at).join(' ')}`
 }
 
-export async function parseThreadWithClaude(thread: string): Promise<ParseResponse> {
-  const fallback = (note: string): ParseResponse => {
-    const { lines, skipped, warnings } = parseThreadDetailed(thread)
-    return { lines, source: 'pattern', note, skipped, warnings }
-  }
-
-  // §5's rule, unchanged: on ANY failure return the pattern parser's result
-  // with a note. This never surfaces an error page.
-  const result = await askAi({
-    system: SYSTEM,
-    user: thread,
-    outputSchema: OUTPUT_SCHEMA,
-    validate: LlmParseResultSchema,
-    effort: 'low',
-  })
-
-  if (!result.ok) return fallback(`${result.reason} The pattern parser was used instead.`)
-  if (result.data.lines.length === 0) {
-    return fallback('The AI found no line items, so the pattern parser was used instead.')
-  }
-
+/**
+ * The model's raw lines, turned into the lines a quotation is built from.
+ *
+ * Exported because the combined reader in readThread.ts produces the same shape
+ * from the same schema — one AI call now answers with the items AND the
+ * customer, and both paths must map a line identically or the two readers would
+ * quietly disagree about what a rate is.
+ */
+export function toParsedLines(raw: LlmParseResult['lines']): {
+  lines: ParsedLine[]
+  rejected: string[]
+} {
   const lines: ParsedLine[] = []
   const rejected: string[] = []
 
-  result.data.lines.forEach((line, index) => {
+  raw.forEach((line, index) => {
     const text = line.rateText.trim()
     const rate = text === '' ? 0 : parseRupeesToPaise(text)
 
@@ -204,6 +200,32 @@ export async function parseThreadWithClaude(thread: string): Promise<ParseRespon
       source: 'llm',
     })
   })
+
+  return { lines, rejected }
+}
+
+export async function parseThreadWithClaude(thread: string): Promise<ParseResponse> {
+  const fallback = (note: string): ParseResponse => {
+    const { lines, skipped, warnings } = parseThreadDetailed(thread)
+    return { lines, source: 'pattern', note, skipped, warnings }
+  }
+
+  // §5's rule, unchanged: on ANY failure return the pattern parser's result
+  // with a note. This never surfaces an error page.
+  const result = await askAi({
+    system: SYSTEM,
+    user: thread,
+    outputSchema: OUTPUT_SCHEMA,
+    validate: LlmParseResultSchema,
+    effort: 'low',
+  })
+
+  if (!result.ok) return fallback(`${result.reason} The pattern parser was used instead.`)
+  if (result.data.lines.length === 0) {
+    return fallback('The AI found no line items, so the pattern parser was used instead.')
+  }
+
+  const { lines, rejected } = toParsedLines(result.data.lines)
 
   if (lines.length === 0) {
     return fallback("None of the AI's lines could be read, so the pattern parser was used.")
