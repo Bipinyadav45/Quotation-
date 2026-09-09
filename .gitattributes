@@ -1,0 +1,21 @@
+# Five developers on Windows machines with their own git settings will otherwise
+# each rewrite every line of every file they touch. Normalise here instead:
+# LF in the repository, whatever the checkout wants in the working copy.
+* text=auto
+
+# Files git must never look inside. Without this, a .docx that happens to
+# contain a 0x0A byte can be treated as text and corrupted by line-ending
+# conversion — and the reference documents below are what the tests compare
+# against, so a silent corruption would look like a failing renderer.
+*.docx binary
+*.xlsx binary
+*.pdf  binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.ico  binary
+*.woff binary
+*.woff2 binary
+
+# Lockfile: real content, but never worth reading in a diff.
+package-lock.json -diff
