@@ -371,11 +371,38 @@ function discard(dir: string): void {
 }
 
 /**
+ * A .docx is a ZIP, and every ZIP starts with the two bytes `PK`. Anything that
+ * does not is not a document, whatever else it might be.
+ *
+ * This check exists because the two backends disagree about what to do with
+ * rubbish. Word refuses it. LibreOffice treats an unrecognised file as PLAIN
+ * TEXT and renders it — hand it the bytes "this is not a docx" and it returns a
+ * perfectly valid one-line PDF, exit code 0, no warning. CI caught exactly that
+ * when the suite began running against LibreOffice instead of Word.
+ *
+ * Silently producing a PDF of the wrong thing is the worst available outcome
+ * for a document that goes to a customer under the company letterhead, so both
+ * backends are now made to fail the same way, loudly, before conversion starts.
+ */
+function looksLikeDocx(buf: Buffer): boolean {
+  return buf.length >= 2 && buf[0] === 0x50 && buf[1] === 0x4b // 'P', 'K'
+}
+
+/**
  * Convert a DOCX buffer to a PDF buffer. Serialised against every other caller.
  * Retries once — a first failure is often a cold or half-initialised backend.
  */
 export function docxToPdf(docx: Buffer): Promise<Buffer> {
   if (!config.pdfBackend) throw new PdfUnavailableError(statusDetail)
+
+  if (!looksLikeDocx(docx)) {
+    return Promise.reject(
+      new Error(
+        'Refusing to convert: this is not a .docx (no ZIP signature). ' +
+          'LibreOffice would render it as plain text and return a PDF of the raw bytes.',
+      ),
+    )
+  }
 
   return enqueue(async () => {
     try {
