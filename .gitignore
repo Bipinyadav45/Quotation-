@@ -16,12 +16,14 @@ Thumbs.db
 # Word lock files (created while a .docx is open)
 ~$*
 
-# Customer data. Resources/ is the Tally sundry-debtors export — 225 real
-# ledgers with addresses and GSTINs — and Supporting Documents/ holds real
-# customer quotations. Neither is loaded by the application or the tests
-# (the .xlsx is only the default path for `npm run import:customers`), so
-# neither needs to be in a repository every developer clones. They are handed
-# over separately. The reference .docx files at the repository root are a
-# different case and stay tracked: docx.test.ts and parser.test.ts read them.
-Resources/
+# Supporting Documents/ holds real customer quotations the desk supplied as
+# reference. Only a comment in shared/company.ts points at them; nothing loads
+# them, so they are handed over separately rather than cloned seven times.
+#
+# Resources/ is deliberately NOT ignored. It is the Tally sundry-debtors export,
+# and importCustomers.test.ts reads it directly — 33 tests assert against the
+# real file, because every quirk they guard (Tally's \x04 before "Not
+# Applicable", addresses flattened into one cell, a GSTIN with a trailing
+# carriage return) came out of that spreadsheet and a hand-built fixture would
+# not carry them. Excluding it would make those tests vanish silently in CI.
 Supporting Documents/
