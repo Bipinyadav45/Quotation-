@@ -1,0 +1,140 @@
+# Newtech Quotation Desk — build, test, publish, deploy.
+#
+# The shape of this file is set by one requirement: the artifact QA tested must
+# be the artifact production runs, provably. That is why nothing downstream ever
+# refers to a tag. The image is built once, pushed once, and every later stage
+# addresses it by its immutable sha256 digest, which cannot drift or be
+# overwritten the way a tag can.
+#
+# Runner: `qa` — Docker executor on the workstation, with the host Docker socket
+# mounted so jobs can build images. Note what that means: a job on this runner
+# can control the host's Docker daemon, which is effectively root on the
+# machine. Acceptable for an internal team on a protected runner; it is the
+# reason the eventual production deploy gets a SEPARATE runner restricted to
+# protected tags, so an ordinary feature branch can never reach production.
+
+stages:
+  - build
+  - test
+  - publish
+  - deploy
+
+default:
+  tags:
+    - qa
+  interruptible: true
+
+variables:
+  # $CI_REGISTRY_IMAGE resolves to gitlab.newtech.internal:5050/newtech/quotation-desk
+  IMAGE: $CI_REGISTRY_IMAGE
+  TEST_TAG: test-$CI_COMMIT_SHORT_SHA
+  BUILD_TAG: $CI_COMMIT_SHA
+  # Full clone rather than the default shallow one: nothing here needs history,
+  # but a shallow clone makes `git describe` lie if it is ever added.
+  GIT_DEPTH: "0"
+
+# ---------------------------------------------------------------------------
+# build — both targets from one Dockerfile, sharing layers
+# ---------------------------------------------------------------------------
+build:
+  stage: build
+  script:
+    # --target test keeps devDependencies and adds LibreOffice; --target runtime
+    # is what ships. They share every layer up to `npm run build`, so building
+    # both costs little more than building one.
+    - docker build --target test    -t "$IMAGE:$TEST_TAG"  .
+    - docker build --target runtime -t "$IMAGE:$BUILD_TAG" .
+    - docker image ls "$IMAGE"
+
+# ---------------------------------------------------------------------------
+# test — inside the image, not on the host
+# ---------------------------------------------------------------------------
+# Running on the host would test against Windows and Microsoft Word. Production
+# is Linux and LibreOffice, so the host would be exercising a different renderer
+# than the one that ships — and pdf.test.ts uses `it.runIf(config.pdfBackend)`,
+# so on a machine with no converter those assertions silently vanish and the job
+# still passes green. Testing inside the test image is what makes them run.
+test:
+  stage: test
+  needs: [build]
+  script:
+    - docker run --rm "$IMAGE:$TEST_TAG" npm run typecheck
+    - docker run --rm "$IMAGE:$TEST_TAG" npm test
+
+# ---------------------------------------------------------------------------
+# publish — push once, and record the digest everything downstream will use
+# ---------------------------------------------------------------------------
+publish:
+  stage: publish
+  needs: [test]
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker push "$IMAGE:$BUILD_TAG"
+    # The digest is assigned by the registry on push and identifies these exact
+    # bytes. Everything after this point uses it instead of the tag.
+    - IMAGE_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE:$BUILD_TAG")
+    - echo "IMAGE_DIGEST=$IMAGE_DIGEST" | tee build.env
+  artifacts:
+    reports:
+      # Passes IMAGE_DIGEST to later jobs as a variable.
+      dotenv: build.env
+
+# ---------------------------------------------------------------------------
+# deploy:qa — by digest, never by tag
+# ---------------------------------------------------------------------------
+deploy:qa:
+  stage: deploy
+  needs: [publish]
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  environment:
+    name: qa
+    url: http://192.168.3.249:8081
+  variables:
+    # A named volume, so redeploying never touches QA's data. Deliberately not a
+    # G:\ bind mount: SQLite file locking is unreliable across Docker Desktop's
+    # Windows path translation, and this database runs in WAL mode.
+    QA_VOLUME: quotation_qa_data
+  script:
+    - docker pull "$IMAGE_DIGEST"
+    - docker rm -f quotation-qa || true
+    - >
+      docker run -d
+      --name quotation-qa
+      --restart unless-stopped
+      --memory=2g --cpus=2.0
+      -p 8081:4000
+      -v "$QA_VOLUME":/app/data
+      -e TZ=Asia/Kolkata
+      "$IMAGE_DIGEST"
+
+    # Prove the running container is the digest we tested, not something a tag
+    # drifted onto. This is the guarantee the whole file exists to provide.
+    - RUNNING=$(docker inspect --format='{{.Image}}' quotation-qa)
+    - EXPECTED=$(docker inspect --format='{{.Id}}' "$IMAGE_DIGEST")
+    - test "$RUNNING" = "$EXPECTED" || { echo "DIGEST MISMATCH - aborting"; exit 1; }
+
+    # The app retries EADDRINUSE for 5s at boot, so do not judge it immediately.
+    - |
+      for i in $(seq 1 30); do
+        if curl -fsS http://127.0.0.1:8081/api/health > /tmp/health.json; then break; fi
+        sleep 2
+      done
+      cat /tmp/health.json
+    # /api/health returns 200 for "degraded" on purpose, so that a missing PDF
+    # converter does not take the container down. A status check alone would
+    # therefore pass with the renderer broken -- assert on the body instead.
+    - grep -q '"status":"ok"' /tmp/health.json || { echo "health not ok"; exit 1; }
+    - grep -q '"database":{"ok":true' /tmp/health.json || { echo "database not ok"; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Production is deliberately absent.
+# ---------------------------------------------------------------------------
+# Deferred pending the hardware decision. When the host is chosen, production
+# deployment is added as a MANUAL job, restricted to protected tags (v*), and
+# running on a SEPARATE runner installed on the production host — so the deploy
+# is pull-based and production needs no inbound connection from CI and no SSH
+# key stored in GitLab. It will take a backup before deploying, assert the
+# digest against the GitLab Release, and roll back on smoke-test failure.
