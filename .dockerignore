@@ -1,0 +1,49 @@
+# The Dockerfile's build stage does `COPY . .`, so without this file the build
+# context is the whole working tree — including .env with the live Gemini key,
+# data/quotes.db with 225 real customers, and 208 MB of node_modules that are
+# about to be rebuilt anyway. Everything listed here is either a secret, state
+# that must come from a volume, or dead weight.
+
+# Secrets. The image is pushed to a registry and pulled onto other machines;
+# nothing here may carry a credential.
+.env
+.env.*
+!.env.example
+
+# State. data/ is the SQLite database and belongs to a volume, not a layer —
+# baking it in would ship one machine's quotations to every other machine and
+# then lose them on the next redeploy.
+data/
+.tmp/
+.preview/
+
+# Rebuilt inside the image. node_modules is linux-native after `npm ci`; a
+# Windows copy would break better-sqlite3's native addon.
+node_modules/
+web/dist/
+dist/
+
+# History and tooling the runtime never reads.
+.git/
+.gitignore
+.gitattributes
+.dockerignore
+Dockerfile
+*.log
+
+# Reference documents the desk supplied, not loaded by the application.
+Supporting Documents/
+
+# Windows and editor droppings.
+Thumbs.db
+.DS_Store
+~$*
+.vscode/
+.idea/
+
+# NOT ignored, and deliberately so — the test stage runs the real suite:
+#   Resources/                      importCustomers.test.ts reads it (33 tests)
+#   Quotation -- Format.docx        docx.test.ts, build-template.ts
+#   Quotation-Morgan Stanley*.docx  docx.test.ts
+#   Quotation-DGSL*.docx            parser.test.ts, render-preview.ts
+# Excluding any of them makes those tests fail or silently skip in CI.

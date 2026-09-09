@@ -48,6 +48,16 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
-    sourcemap: true,
+    /**
+     * Off by default. Express serves web/dist to anyone who can reach the port,
+     * and the application has no authentication in front of it, so a sourcemap
+     * publishes the readable source of the whole frontend to the LAN — 622 KB
+     * of it, alongside a 206 KB bundle.
+     *
+     * SOURCEMAP=true when you need to read a stack trace from a built bundle.
+     * Leave it unset for anything that gets deployed: QA has to exercise the
+     * same artifact production runs, so this must not differ between them.
+     */
+    sourcemap: process.env.SOURCEMAP === 'true',
   },
 })

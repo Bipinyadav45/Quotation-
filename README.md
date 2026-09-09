@@ -20,12 +20,16 @@ Built to [PROMPT.md](PROMPT.md).
 ## Running it
 
 ```bash
-npm install
-cp .env.example .env      # fill in ANTHROPIC_API_KEY if you want the Claude parser
+npm ci                    # not `npm install` — respects the lockfile
+cp .env.example .env      # optional: GEMINI_API_KEY turns the AI features on
 npm run build:template    # rebuilds the .docx template from the letterhead
 npm run import:customers  # loads the Tally debtors list into the customer master
 npm run dev               # http://localhost:5173
 ```
+
+Without `GEMINI_API_KEY` the application is **fully usable** — the customer master, price memory,
+the parser and every document path work unchanged. The two AI features simply are not offered;
+`GET /api/capabilities` tells the frontend to hide the buttons.
 
 In production the frontend is built and served by the same Express process — one port, one URL:
 
@@ -250,8 +254,10 @@ Each has a regression test. The full reasoning is in [PROJECT-LOG.md](PROJECT-LO
    filename and `Total` rows both parsed as products, and a wrapped description whose product
    name sat three lines above its quantity.
 
-Two smaller ones: the model is `claude-sonnet-5` (§2's `claude-sonnet-4-6` still works but is a
-generation behind), and the LLM parser uses structured outputs rather than asking for bare JSON
+Two smaller ones: the provider is Google Gemini, not Anthropic — §2 specified `claude-sonnet-4-6`
+and the code moved to `gemini-3.6-flash` with a fallback chain in `server/src/lib/ai.ts`, which is
+where the current model is decided rather than here — and the LLM parser uses structured outputs
+rather than asking for bare JSON
 and stripping fences — the response is constrained to the schema, then validated with the same
 Zod schema §5 asked for. §5 puts that button there for "threads the regexes cannot handle —
 tables pasted out of Excel"; a forwarded chain carrying several revisions is exactly that.

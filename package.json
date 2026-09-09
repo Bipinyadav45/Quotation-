@@ -18,7 +18,9 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "preview": "tsx server/scripts/render-preview.ts",
-    "import:customers": "tsx server/scripts/import-customers.ts"
+    "import:customers": "tsx server/scripts/import-customers.ts",
+    "migrate": "tsx server/scripts/migrate.ts",
+    "backup": "tsx server/scripts/backup.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.5.0",

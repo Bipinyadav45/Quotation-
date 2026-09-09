@@ -1,6 +1,10 @@
 node_modules/
 dist/
 data/
+
+# `npm run backup` output. Real customer data, and rebuildable — it belongs on
+# the backup drive, not in a repository.
+backups/
 .env
 .env.local
 *.log
