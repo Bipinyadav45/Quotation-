@@ -6,7 +6,7 @@ import { COMPANY } from '@shared/company.js'
 import { askAi, type AiResult } from './ai.js'
 
 /**
- * Draft the covering email that goes with the proforma invoice.
+ * Draft the covering email that goes with the quotation.
  *
  * Given the saved document and the thread it came out of, so the reply is in
  * the register the customer wrote in and answers what they actually asked.
@@ -28,7 +28,7 @@ const OUTPUT_SCHEMA = {
   properties: {
     subject: {
       type: 'string',
-      description: 'Email subject line. Reference the proforma invoice number.',
+      description: 'Email subject line. Reference the quotation number.',
     },
     body: {
       type: 'string',
@@ -72,13 +72,13 @@ export async function draftCoveringEmail(quote: Quote): Promise<AiResult<Drafted
     `Signed by: ${quote.signatory}, ${COMPANY.name}`,
   ].join('\n')
 
-  const system = `You write the covering email that goes out with a proforma invoice from ${COMPANY.name}, an Indian IT hardware reseller, to a business customer.
+  const system = `You write the covering email that goes out with a quotation from ${COMPANY.name}, an Indian IT hardware reseller, to a business customer.
 
 House style, from the documents they send:
 - Open "Dear Sir," unless the thread makes a name clearly appropriate.
 - Short. Four or five sentences. Indian business English, courteous and plain.
 - State the reference number and the total. Do not restate every line item —
-  the proforma invoice is attached and repeating it invites a discrepancy.
+  the quotation is attached and repeating it invites a discrepancy.
 - Answer anything the customer specifically asked in the thread: a delivery
   location, a warranty question, a deadline.
 - Close "Thanking You," then "Yours Truly," then the signatory's name.
@@ -90,7 +90,7 @@ Every figure you need is given to you already formatted. Copy figures exactly;
 never recompute or reformat them.`
 
   const user = [
-    '=== The proforma invoice being sent ===',
+    '=== The quotation being sent ===',
     summary,
     '',
     '=== The thread it came out of ===',

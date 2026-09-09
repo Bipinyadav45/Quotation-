@@ -10,6 +10,14 @@ export class ApiError extends Error {
     message: string,
     readonly status: number,
     readonly issues?: Array<{ path: string; message: string }>,
+    /**
+     * The whole refusal, for the routes that answer one with something to act
+     * on rather than only something to read. A save refused for not naming a
+     * customer comes back with the ledgers it could be, and a screen that had
+     * only the sentence would leave the desk retyping a name to get at a list
+     * the server already sent.
+     */
+    readonly body?: Record<string, unknown>,
   ) {
     super(message)
     this.name = 'ApiError'
@@ -53,6 +61,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       (body.error as string) ?? `${res.status} ${res.statusText}`,
       res.status,
       body.issues as Array<{ path: string; message: string }> | undefined,
+      body,
     )
   }
 

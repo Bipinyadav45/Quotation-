@@ -45,6 +45,9 @@ const QUOTE: Quote = {
   ref: 'NCS/2026-27/Quotes/RG/026',
   revision: 0,
   date: '2026-06-23',
+  // The real quotation predates the customer master carrying ledger ids, and
+  // this fixture reproduces that document rather than improving on it.
+  customerId: null,
   customer: {
     name: 'Datamatics Global Services Limited.',
     address:
@@ -52,6 +55,7 @@ const QUOTE: Quote = {
     attention: 'Mr. Mahesh Jathar.',
     state: 'Puducherry',
   },
+  queriesNumbers: '40668812/88',
   contact: '022-40668809',
   email: 'rakhi.gupte@newtech.in',
   signatory: 'Rakhi Gupte',

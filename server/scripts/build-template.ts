@@ -556,17 +556,17 @@ function buildBody(sectPr: string): string {
     addressBlock,
     p(),
     p('Dear Sir,'),
-    p('Please find the following Proforma Invoice for your kind consideration: -'),
+    p('Please find the following Quotation for your kind consideration: -'),
     p(),
     // Heading5 => centred, bold, underlined. Those come from the style, not
     // from the paragraph.
     //
-    // The document is a Proforma Invoice, not a quotation. The reference series
-    // still reads NCS/<FY>/Quotes/<initials>/<seq> and the application is still
-    // called the Quotation Desk -- those are an identifier and a workplace name,
-    // and renaming either would break the numbering's continuity with every
-    // document already sent.
-    p('Proforma Invoice ', { style: 'Heading5' }),
+    // "Quotation" is what both of the desk's own documents say, here and in the
+    // line above. It was changed to "Proforma Invoice" and has been changed
+    // back on the desk's instruction, which puts it back in agreement with the
+    // reference documents in the repository -- and with the reference series,
+    // NCS/<FY>/Quotes/<initials>/<seq>, which never stopped saying Quotes.
+    p('Quotation ', { style: 'Heading5' }),
     p(),
     itemsTable,
     p(),
@@ -606,10 +606,14 @@ function buildBody(sectPr: string): string {
      */
     p('5.    Warranty\t: {warranty}', TERMS_NUMBERED),
     p('', TERMS),
-    p(
-      `If you have any queries, please feel free to call us at ${COMPANY.queriesNumbers}`,
-      TERMS,
-    ),
+    /**
+     * A TAG, not a constant baked in at build time, because the numbers belong
+     * to the salesperson rather than to the company: the desk's own documents
+     * close "call us at 40668812/88" over Rakhi Gupte's name and "call us at
+     * 40668803/40668888" over Linda D'mello's. Whichever of them the quotation
+     * is from, this is theirs.
+     */
+    p('If you have any queries, please feel free to call us at {queriesNumbers}', TERMS),
     p('Looking forward to an encouraging and early response.', TERMS),
     /**
      * The closing, spaced as the quotation the desk supplied as correct — one

@@ -33,7 +33,7 @@ let origin: string
 const TERMS = {
   payment: '100% Advance',
   delivery: '1-2 Weeks after PO',
-  prices: 'All-inclusive as per this proforma invoice',
+  prices: 'All-inclusive as per this quotation',
   validity: '31st August 2026.',
 }
 

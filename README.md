@@ -23,6 +23,7 @@ Built to [PROMPT.md](PROMPT.md).
 npm install
 cp .env.example .env      # fill in ANTHROPIC_API_KEY if you want the Claude parser
 npm run build:template    # rebuilds the .docx template from the letterhead
+npm run import:customers  # loads the Tally debtors list into the customer master
 npm run dev               # http://localhost:5173
 ```
 
@@ -39,12 +40,13 @@ npm start                 # http://localhost:4000
 | `npm test` | The whole suite |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run build:template` | Regenerates `server/templates/quotation-template.docx` from the letterhead |
+| `npm run import:customers` | Loads Tally's Sundry Debtors export into the customer master. `-- --dry-run` to look first |
 
 ## What it does for you
 
 | | Needs a key? | Cost |
 |---|---|---|
-| **Customer master** — the second quotation to a customer fills itself | no | free |
+| **Customer master** — 225 ledgers out of Tally; picking one fills the address block | no | free |
 | **Price memory** — what you last charged, under each Rate cell | no | free |
 | **Read it with AI** — the lines *and* the customer, in one pass | yes | ~₹1.7 |
 | **Draft covering email** — the note that goes with the document | yes | ~₹0.4 |
@@ -71,6 +73,53 @@ are independent, so a wrong address never costs you a correct GSTIN. A GSTIN
 read from an email signature is a suggestion; the one on file was confirmed by
 someone saving a quotation with it, and wins.
 
+## The customer list
+
+The master is the desk's Tally sundry debtors, imported whole:
+
+```bash
+npm run import:customers -- --dry-run   # what it would do, and what to fix in Tally
+npm run import:customers                # 225 ledgers, matched on the ledger name
+```
+
+Re-runnable on a fresh export — rows are matched on the Tally ledger name, which
+Tally keeps unique, so a second import updates rather than duplicating. Tally
+owns the address, GSTIN, state, country and registration type and a re-import
+overwrites them; what the desk has learned by *using* a row — how many
+quotations, who they were addressed to, which salesperson owns the account — is
+left alone.
+
+**A customer is a ledger, not a name**, and this list is why. Fourteen ledgers
+are spelled some version of "Datamatics Global Services Limited", seventeen
+answer to "Morgan Stanley", and three Azentio sites share a name *and* a GSTIN,
+differing only in their address. Thirty-nine GSTINs on the list are held by more
+than one ledger. So:
+
+- **"Read it with AI" never picks the customer.** It narrows the list and shows
+  what it narrowed it to. A thread saying "Morgan Stanley" matches seventeen
+  ledgers across ten GSTINs and three states — and the ship-to state decides
+  IGST versus CGST+SGST, so guessing is guessing at the tax treatment. Until
+  somebody chooses, the customer block stays empty.
+- **The chooser leads with the address**, because for the Azentio rows it is the
+  only thing that differs. So does the typeahead, which also searches the
+  address and the GSTIN — `powai` and a pasted registration number both work.
+- **The server refuses the save**, not just the button. A quotation whose
+  customer name matches ledgers without naming one comes back 409 with the
+  candidates. Typing a ledger's name *exactly* counts as naming it — Tally
+  ledger names are unique — so quoting the same customer again is one keystroke,
+  not a dialog.
+- **A company not on the list is still quotable**, deliberately: "none of these"
+  is one click, and the customer is added on save. New customers get quoted
+  before Tally has them.
+
+Quotations record `customer_id` alongside the name that printed, so which entity
+was billed is answerable afterwards. It is null for the ones quoted off the list.
+
+The import reports what it cannot fix — a GSTIN of the wrong shape is dropped
+rather than stored, and a state that disagrees with the GSTIN registered against
+it is named for the desk to settle in Tally. It found four such rows in the
+current export and imported all 225 anyway.
+
 ## PDF export
 
 The PDF is produced by converting the generated `.docx` — not by rendering the quotation a
@@ -93,6 +142,34 @@ Force one with `PDF_BACKEND=libreoffice|word` in `.env`, or point at an unusual 
 > five-person desktop tool it is fine, and every conversion is serialised through one queue
 > (see below) rather than run concurrently.
 
+**The PDF is editable** — real text, no encryption, embedded fonts, and a tag tree — and there
+are tests asserting each of those rather than the settings that produce them. The one that
+matters is `BitmapMissingFonts`, whose Word default is TRUE and means *"if a font cannot be
+embedded, draw that text as a picture instead"*: a quotation exported that way has no text at
+all, the export still succeeds, and it would happen only for the customers whose document used
+the wrong glyph. It is passed `false` explicitly.
+
+Word subsets embedded fonts on PDF export and gives no way to stop it. That is fine here — the
+letterhead is Times New Roman and Arial, which every machine already has — and it was measured
+rather than assumed; see PROJECT-LOG §9.
+
+## The two people who sign these
+
+| | Rakhi Gupte (`RG`) | Linda D'mello (`LD`) |
+|---|---|---|
+| Contact | 022-40668809 | 40668803 |
+| Email | rakhi.gupte@newtech.in | Linda.pdmello@newtech.**co**.in |
+| Closing | call us at 40668812/88 | call us at 40668803/40668888 |
+
+All four differ, the closing line included — it looks like a company constant and is not. Pick
+the person with **Prepared by** in the editor and all four follow, because on this document they
+are not four facts but one person: a quotation numbered `.../LD/` over Rakhi's direct line is one
+neither of them can answer the phone for. Everything the picker sets stays editable.
+
+They live in `SALESPEOPLE` in [shared/company.ts](shared/company.ts); a third person is a data
+change. The closing numbers are stored on each quotation, so a number that changes later cannot
+rewrite a document already with a customer.
+
 ## Layout
 
 ```
@@ -105,7 +182,18 @@ web/        React, three screens
 declared once there as Zod schemas, which then provide the TypeScript types, validate every
 request, and constrain the LLM parser's output.
 
-## Three things worth knowing before you change anything
+## Things worth knowing before you change anything
+
+**A customer is a ledger, not a name.** See above. `customers.id` is the
+identity and `quotes.customer_id` records it; `lower(name)` was UNIQUE until
+004 and the desk's own list cannot survive that. Nothing may collapse two rows
+because their names match.
+
+**GST is 18%, one row, always.** The editor's tax dropdown is gone at the desk's request —
+both documents they supplied print a single "GST 18%" row whatever the ship-to state.
+`computeTotals` still knows how to split it into CGST + SGST and every quotation stores the mode
+it was saved with, so putting the control back is a UI change and nothing else. Read the note
+beside `GST_RATE_PERCENT` before you do.
 
 **Money is integer paise, everywhere.** Nothing divides by 100 in floating point. `qty × rate`
 is an exact integer, so §7's rule — sum the unrounded line amounts, apply tax to the subtotal,
@@ -149,8 +237,11 @@ Each has a regression test. The full reasoning is in [PROJECT-LOG.md](PROJECT-LO
    columns and the instruction is to reproduce it, not improve it. The
    "Amount in words" line went the same way, and the tax row says "GST 18%"
    because that is the letterhead's own word — §7 argued for "IGST" on an
-   out-of-state sale, which is arguably more correct; it is one string in
-   `shared/money.ts` if that is ever revisited.
+   out-of-state sale, which is arguably more correct. The desk has since gone
+   further and removed the choice: **one GST 18% row on every quotation**, with
+   no dropdown and no rate box, because both documents they supplied print
+   exactly that whatever state the customer ships to. §7's CGST/SGST split still
+   exists in `shared/money.ts` and nothing selects it.
 3. **§6's comparison is gone entirely**, at the desk's request — see the note at the top.
 4. **§5's parser assumes one line per item, and real mail does not.** Four threads out of the
    desk's mailbox broke it, and each is now a fixture: a quantity on its own line

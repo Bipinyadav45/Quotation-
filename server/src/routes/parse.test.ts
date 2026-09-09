@@ -74,14 +74,31 @@ const EXTRACTED = {
 /** The whole read, as one call now answers it. */
 const GOOD_READ: AiResult<ThreadRead> = {
   ok: true,
-  data: { lines: LLM_LINES.lines, rejected: [], extracted: { ...EXTRACTED }, onFile: null },
+  data: { lines: LLM_LINES.lines, rejected: [], extracted: { ...EXTRACTED }, candidates: [] },
 }
 
 /** The same read, but the thread named products nowhere. */
 const NO_LINES: AiResult<ThreadRead> = {
   ok: true,
-  data: { lines: [], rejected: [], extracted: { ...EXTRACTED }, onFile: null },
+  data: { lines: [], rejected: [], extracted: { ...EXTRACTED }, candidates: [] },
 }
+
+/** One row of the customer master, as the route hands it back. */
+const ledger = (name: string, gstin: string, state: string) => ({
+  id: name,
+  name,
+  address: name.replace(/^.*\(|\)$/g, ''),
+  attention: '',
+  gstin,
+  state,
+  contact: '',
+  email: '',
+  country: 'India',
+  regType: 'Regular',
+  source: 'tally' as const,
+  quoteCount: 0,
+  lastUsedAt: '2026-01-01T00:00:00.000Z',
+})
 
 let server: Server
 let origin: string
@@ -139,6 +156,49 @@ describe('POST /parse/ai', () => {
     expect(body.customerNote).toBeUndefined()
   })
 
+  it('fills nothing in and offers the ledgers when several could be the customer', async () => {
+    /**
+     * The route's half of the rule. Two ledgers with different GSTINs and
+     * different states matched, so the four deciding fields come back blank and
+     * the shortlist comes back instead — see AiReadResponseSchema. The lines are
+     * unaffected: the customer being unresolved is not a failure of the read.
+     */
+    stub.readThreadWithAi.mockResolvedValue({
+      ok: true,
+      data: {
+        lines: LLM_LINES.lines,
+        rejected: [],
+        extracted: { ...EXTRACTED, name: 'Azentio Software Pvt Ltd' },
+        candidates: [
+          {
+            record: ledger('AZENTIO SOFTWARE PVT LTD (MALAD)', '27AAUCA4876F1Z4', 'Maharashtra'),
+            score: 1,
+            gstinMatch: false,
+          },
+          {
+            record: ledger('AZENTIO SOFTWARE PVT LTD (HYD)', '36AAUCA4876F1Z5', 'Telangana'),
+            score: 1,
+            gstinMatch: false,
+          },
+        ],
+      },
+    } as AiResult<ThreadRead>)
+
+    const { status, body } = await readWithAi()
+
+    expect(status).toBe(200)
+    expect(body.lines).toHaveLength(1)
+    expect(body.customerCandidates).toHaveLength(2)
+    expect(body.customer?.address).toBe('')
+    expect(body.customer?.gstin).toBe('')
+    expect(body.customer?.state).toBe('')
+    // The name survives, because the chooser has to ask its question with it.
+    expect(body.customer?.name).toBe('Azentio Software Pvt Ltd')
+    // Each candidate carries what it would fill in, so choosing costs no round trip.
+    expect(body.customerCandidates[0]?.customer.gstin).toBe('27AAUCA4876F1Z4')
+    expect(body.customerCandidates[1]?.customer.state).toBe('Telangana')
+  })
+
   it('costs exactly one request, however many halves the answer has', async () => {
     // The whole reason this route stopped making two calls. A press that costs
     // two is a press the free tier allows ten of a day, and the desk ran out
@@ -171,8 +231,8 @@ describe('POST /parse/ai', () => {
   })
 
   it('still gives the desk lines when the read throws', async () => {
-    // The read touches the database through matchOnFile. A locked database must
-    // not cost the desk its line items.
+    // The read touches the database to shortlist ledgers. A locked database
+    // must not cost the desk its line items.
     stub.readThreadWithAi.mockRejectedValue(new Error('database is locked'))
 
     const { status, body } = await readWithAi()

@@ -1,0 +1,20 @@
+-- 005_queries_numbers — the closing "call us at" line belongs to the person,
+-- not to the company.
+--
+-- It was a constant in shared/company.ts, baked into the template at build
+-- time, because one salesperson was seeded and one number was therefore always
+-- right. With two people it is wrong half the time: the desk's own documents
+-- close "call us at 40668812/88" over Rakhi Gupte's name and "call us at
+-- 40668803/40668888" over Linda D'mello's.
+--
+-- Stored on the quotation rather than looked up when the document is rendered,
+-- for the same reason contact, email and signatory are stored beside it: a
+-- quotation is a record of what was SENT. A number that changes, or a
+-- salesperson who leaves the list, must not silently rewrite the closing of a
+-- document that went to a customer two years ago.
+--
+-- Blank is the correct value for every row already here. They were all written
+-- when the line was a constant, so the renderer falls back to the initials in
+-- their reference — see salespersonByInitials — and they render exactly as they
+-- did yesterday.
+ALTER TABLE quotes ADD COLUMN queries_numbers TEXT NOT NULL DEFAULT '';

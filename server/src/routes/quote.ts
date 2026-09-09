@@ -2,6 +2,8 @@ import { Router } from 'express'
 import { randomUUID } from 'node:crypto'
 import {
   SaveQuoteRequestSchema,
+  type Customer,
+  type CustomerCandidate,
   UpdateQuoteRequestSchema,
   UpdateStatusRequestSchema,
   type Quote,
@@ -13,7 +15,16 @@ import { validateBody, validated } from '../middleware/validate.js'
 import { getDb } from '../db/client.js'
 import { allocateRef, claimRef, peekNextSeq } from '../lib/refno.js'
 import { loadMakes } from '../lib/makes.js'
-import { rememberCustomer, searchCustomers } from '../lib/customers.js'
+import {
+  allCustomers,
+  findCustomerById,
+  findCustomerByName,
+  rememberCustomer,
+  searchCustomers,
+  type CustomerRecord,
+} from '../lib/customers.js'
+import { rankCandidates } from '../lib/customerMatch.js'
+import { mergeWithLedger } from '../lib/extractCustomer.js'
 import { findPastPrices } from '../lib/priceHistory.js'
 import { draftCoveringEmail } from '../lib/draftEmail.js'
 import { z } from 'zod'
@@ -91,8 +102,125 @@ quoteRoutes.post('/price-history', validateBody(PriceHistoryBodySchema), (req, r
   })
 })
 
+
+/**
+ * Which ledger is this quotation for — and is that question answered?
+ *
+ * This is the rule the customer master's redesign exists to enforce, and it
+ * lives on the server rather than in the Save button because a disabled button
+ * is a suggestion. The desk's Tally list holds sixteen ledgers spelled some
+ * version of "Datamatics Global Services Limited" and seventeen answering to
+ * "Morgan Stanley", each with its own GSTIN, address and ship-to state — and
+ * the state decides whether the document carries IGST or a CGST/SGST pair. A
+ * quotation that names a company without saying WHICH one has not recorded who
+ * it was for, and nothing downstream can recover it afterwards.
+ *
+ * FOUR WAYS THE QUESTION IS ANSWERED, and only the last one refuses:
+ *
+ *   1. a ledger was chosen — the id says which, and it has to still exist;
+ *   2. the desk said the company is not on the list at all;
+ *   3. the name IS a ledger name, exactly. Tally ledger names are unique, so
+ *      this identifies one row by construction and there is nothing to choose
+ *      between — which is what makes quoting the same customer a second time
+ *      frictionless. Without this the desk would be blocked by their own first
+ *      quotation the moment they typed the name instead of picking it. The id
+ *      is resolved here, so the record still names the ledger;
+ *   4. nothing on the list could be this company — a new customer, quoted
+ *      before Tally has it. Ordinary, and recorded as a new row on save.
+ *
+ * Anything else means the name matches ledgers WITHOUT naming one of them, and
+ * that is the case a person has to settle.
+ */
+type CustomerChoice =
+  | { ok: true; customerId: string | null }
+  | { ok: false; message: string; candidates: CustomerCandidate[] }
+
+function resolveCustomerChoice(input: {
+  customer: Customer
+  customerId?: string
+  customerOffList?: boolean
+}): CustomerChoice {
+  if (input.customerId !== undefined) {
+    // Named a ledger that does not exist. Far more likely a stale browser than
+    // anything sinister, but either way it must not be written as a fact.
+    if (findCustomerById(input.customerId) === null) {
+      return {
+        ok: false,
+        message:
+          'The customer chosen for this quotation is no longer on your customer list. ' +
+          'Choose the customer again before saving.',
+        candidates: offer(input.customer, allCustomers()),
+      }
+    }
+    return { ok: true, customerId: input.customerId }
+  }
+
+  // Said "none of these". They were shown the ledgers and rejected them, which
+  // is an answer to the question rather than a way of avoiding it.
+  if (input.customerOffList === true) return { ok: true, customerId: null }
+
+  const exact = findCustomerByName(input.customer.name)
+  if (exact !== null) return { ok: true, customerId: exact.id }
+
+  const candidates = rankCandidates({ name: input.customer.name }, allCustomers())
+  if (candidates.length === 0) return { ok: true, customerId: null }
+
+  const names = candidates.slice(0, 4).map((c) => c.record.name)
+  const rest =
+    candidates.length > names.length ? `, and ${candidates.length - names.length} more` : ''
+
+  return {
+    ok: false,
+    message:
+      `${candidates.length} customer${candidates.length === 1 ? '' : 's'} on your list ` +
+      `match "${input.customer.name.trim()}" — ${names.join('; ')}${rest}. ` +
+      'Choose which one this quotation is for before saving: they do not share a GSTIN, ' +
+      'an address or necessarily a ship-to state.',
+    candidates: offer(input.customer, allCustomers()),
+  }
+}
+
+/**
+ * The refusal carries the CHOOSER, not just a sentence naming the ledgers.
+ *
+ * Without this there is a dead end, and it is an ordinary one: open a quotation
+ * saved before 004 — every one of them has a null customer_id — press Revise,
+ * press Save. Nothing was read, so the editor has no shortlist to show, and the
+ * desk gets a 409 listing seventeen Morgan Stanleys with no way to act on it
+ * but to go and retype the name.
+ *
+ * Built with the same mergeWithLedger the read path uses, over the DRAFT's own
+ * customer values in place of a thread. That is what they are: whatever is in
+ * those boxes now is the claim being made about this customer, and merging it
+ * against each ledger answers the same question — what would this quotation
+ * look like if it were this one?
+ */
+function offer(customer: Customer, ledgers: CustomerRecord[]): CustomerCandidate[] {
+  const asRead = {
+    name: customer.name,
+    address: customer.address,
+    attention: customer.attention,
+    gstin: customer.gstin ?? '',
+    state: customer.state ?? '',
+    confidence: 'high' as const,
+  }
+
+  return rankCandidates(asRead, ledgers).map((candidate) => ({
+    record: candidate.record,
+    score: candidate.score,
+    gstinMatch: candidate.gstinMatch,
+    ...mergeWithLedger(asRead, candidate.record),
+  }))
+}
+
 quoteRoutes.post('/quote', validateBody(SaveQuoteRequestSchema), (req, res) => {
   const input = validated(SaveQuoteRequestSchema, req)
+
+  const choice = resolveCustomerChoice(input)
+  if (!choice.ok) {
+    res.status(409).json({ error: choice.message, customerCandidates: choice.candidates })
+    return
+  }
   const db = getDb()
   const now = new Date().toISOString()
 
@@ -141,7 +269,8 @@ quoteRoutes.post('/quote', validateBody(SaveQuoteRequestSchema), (req, res) => {
       `INSERT INTO quotes (
          id, ref, revision, date,
          customer_name, customer_address, customer_attention, customer_gstin, customer_state,
-         contact, email, signatory,
+         customer_id,
+         contact, email, signatory, queries_numbers,
          tax_mode, tax_rate,
          term_payment, term_delivery, term_prices, term_validity, term_warranty,
          sub_paise, tax_paise, total_paise,
@@ -150,7 +279,8 @@ quoteRoutes.post('/quote', validateBody(SaveQuoteRequestSchema), (req, res) => {
        ) VALUES (
          @id, @ref, @revision, @date,
          @customerName, @customerAddress, @customerAttention, @customerGstin, @customerState,
-         @contact, @email, @signatory,
+         @customerId,
+         @contact, @email, @signatory, @queriesNumbers,
          @taxMode, @taxRate,
          @termPayment, @termDelivery, @termPrices, @termValidity, @termWarranty,
          @sub, @tax, @total,
@@ -167,9 +297,11 @@ quoteRoutes.post('/quote', validateBody(SaveQuoteRequestSchema), (req, res) => {
       customerAttention: input.customer.attention,
       customerGstin: input.customer.gstin ?? null,
       customerState: input.customer.state ?? null,
+      customerId: choice.customerId,
       contact: input.contact,
       email: input.email,
       signatory: input.signatory,
+      queriesNumbers: input.queriesNumbers,
       taxMode: input.tax.mode,
       taxRate: input.tax.rate,
       termPayment: input.terms.payment,
@@ -186,7 +318,13 @@ quoteRoutes.post('/quote', validateBody(SaveQuoteRequestSchema), (req, res) => {
 
     // The customer master builds itself from real use. Inside the transaction,
     // so a quotation and the customer it taught us about commit together.
+    //
+    // The id is what makes an edit safe now: with it, this updates the LEDGER
+    // that was chosen. Without it — a company quoted off the list — it falls
+    // back to the name, which is correct there because nothing on file answers
+    // to it.
     rememberCustomer(db, {
+      ...(choice.customerId !== null ? { id: choice.customerId } : {}),
       name: input.customer.name,
       address: input.customer.address,
       attention: input.customer.attention,
@@ -222,9 +360,11 @@ quoteRoutes.post('/quote', validateBody(SaveQuoteRequestSchema), (req, res) => {
       revision,
       date: input.date,
       customer: input.customer,
+      customerId: choice.customerId,
       contact: input.contact,
       email: input.email,
       signatory: input.signatory,
+      queriesNumbers: input.queriesNumbers,
       items: input.items,
       tax: input.tax,
       terms: input.terms,
@@ -354,6 +494,15 @@ quoteRoutes.put<{ id: string }>(
   validateBody(UpdateQuoteRequestSchema),
   (req, res) => {
     const input = validated(UpdateQuoteRequestSchema, req)
+
+    // An edit is held to the same rule as a save. It can change the customer,
+    // so it can also change it into an ambiguous one.
+    const choice = resolveCustomerChoice(input)
+    if (!choice.ok) {
+      res.status(409).json({ error: choice.message, customerCandidates: choice.candidates })
+      return
+    }
+
     const db = getDb()
     const id = req.params.id
     const now = new Date().toISOString()
@@ -385,9 +534,11 @@ quoteRoutes.put<{ id: string }>(
            customer_attention = @customerAttention,
            customer_gstin = @customerGstin,
            customer_state = @customerState,
+           customer_id = @customerId,
            contact = @contact,
            email = @email,
            signatory = @signatory,
+           queries_numbers = @queriesNumbers,
            tax_mode = @taxMode,
            tax_rate = @taxRate,
            term_payment = @termPayment,
@@ -409,9 +560,11 @@ quoteRoutes.put<{ id: string }>(
         customerAttention: input.customer.attention,
         customerGstin: input.customer.gstin ?? null,
         customerState: input.customer.state ?? null,
+        customerId: choice.customerId,
         contact: input.contact,
         email: input.email,
         signatory: input.signatory,
+        queriesNumbers: input.queriesNumbers,
         taxMode: input.tax.mode,
         taxRate: input.tax.rate,
         termPayment: input.terms.payment,
@@ -430,6 +583,7 @@ quoteRoutes.put<{ id: string }>(
       // repaired address, a GSTIN finally read off the letterhead — reaches the
       // customer master instead of dying with the edit.
       rememberCustomer(db, {
+        ...(choice.customerId !== null ? { id: choice.customerId } : {}),
         name: input.customer.name,
         address: input.customer.address,
         attention: input.customer.attention,
@@ -596,9 +750,11 @@ export function loadQuote(id: string): Quote | null {
       ...(row.customer_gstin ? { gstin: row.customer_gstin as string } : {}),
       ...(row.customer_state ? { state: row.customer_state as string } : {}),
     },
+    customerId: (row.customer_id as string | null) ?? null,
     contact: row.contact as string,
     email: row.email as string,
     signatory: row.signatory as string,
+    queriesNumbers: (row.queries_numbers as string) ?? '',
     items: items.map((i) => ({
       desc: i.description as string,
       make: i.make as string,

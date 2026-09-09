@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { CustomerRecord, ExtractedCustomer, PriceMatch, Quote } from '@shared/schema'
+import type { CustomerCandidate, CustomerRecord, PriceMatch, Quote } from '@shared/schema'
 import { amountInWords, computeTotals, formatPaise, pad2, parseRupeesToPaise } from '@shared/money'
 import { formatDateLong, fromISODate } from '@shared/fy'
-import { INDIAN_STATES, taxModeForState } from '@shared/states'
-import { apiDownload, apiPost, apiPut, useApi } from '../lib/api'
+import { INDIAN_STATES } from '@shared/states'
+import { GST_RATE_PERCENT, SALESPEOPLE } from '@shared/company'
+import { apiDownload, ApiError, apiPost, apiPut, useApi } from '../lib/api'
 import Callout from '../components/Callout'
 import CoveringEmail from '../components/CoveringEmail'
 import CustomerField from '../components/CustomerField'
+import CustomerChooser from '../components/CustomerChooser'
 import DocumentPreview, { type DocumentData } from '../components/DocumentPreview'
 import ScreenHeader from '../components/ScreenHeader'
 
@@ -26,9 +28,39 @@ export interface QuoteDraft {
   date: string
   initials: string
   customer: { name: string; address: string; attention: string; gstin: string; state: string }
+  /**
+   * WHICH ledger on the customer master this quotation is for.
+   *
+   * Null means none has been chosen. That is a legitimate finished state — a
+   * company quoted before Tally has it — but it is NOT legitimate while
+   * `customerCandidates` below is non-empty, and the save is blocked until one
+   * of them is picked or the desk says none of them is right.
+   *
+   * `customer.name` is only the text that prints. It cannot serve as identity
+   * on a list holding seventeen ledgers that answer to "Morgan Stanley".
+   */
+  customerId: string | null
+  /**
+   * The desk was shown the matching ledgers and said none of them is right.
+   *
+   * Distinct from `customerId: null`, which merely means unanswered — the
+   * server can tell the two apart and only lets this one through.
+   */
+  customerOffList?: boolean
+  /**
+   * Ledgers the thread might have meant, from the AI read. Non-empty means
+   * nothing was filled in and the chooser is on screen.
+   */
+  customerCandidates?: CustomerCandidate[]
   contact: string
   email: string
   signatory: string
+  /**
+   * The closing line's numbers, which are the salesperson's and not the
+   * company's. Set by the Prepared by picker along with the other three, and
+   * editable like them.
+   */
+  queriesNumbers: string
   items: EditorItem[]
   tax: { mode: 'IGST' | 'CGST+SGST'; rate: number }
   /** Blank warranty is the ordinary case, and prints no term 5 — see TermsSchema. */
@@ -129,6 +161,7 @@ export default function QuoteEditor({
     contact: draft.contact,
     email: draft.email,
     signatory: draft.signatory,
+    queriesNumbers: draft.queriesNumbers,
     items: draft.items.map((i) => ({ desc: i.desc, make: i.make, qty: i.qty, rate: i.rate })),
     tax: draft.tax,
     terms: draft.terms,
@@ -187,9 +220,14 @@ export default function QuoteEditor({
         ...(draft.customer.gstin ? { gstin: draft.customer.gstin } : {}),
         ...(draft.customer.state ? { state: draft.customer.state } : {}),
       },
+      ...(draft.customerId !== null ? { customerId: draft.customerId } : {}),
+      ...(draft.customerId === null && draft.customerOffList === true
+        ? { customerOffList: true }
+        : {}),
       contact: draft.contact,
       email: draft.email,
       signatory: draft.signatory,
+      queriesNumbers: draft.queriesNumbers,
       items: draft.items.map((i) => ({
         desc: i.desc,
         make: i.make,
@@ -237,8 +275,10 @@ export default function QuoteEditor({
       })
     } catch (err) {
       // The server's own sentence — the field a 400 names, the status a 409
-      // names — reaching the desk exactly as a save error already does.
-      setMessage({ tone: 'problem', text: (err as Error).message })
+      // names — reaching the desk exactly as a save error already does. A
+      // download WRITES first when the screen has moved on, so it can be
+      // refused for not naming a customer too, and it puts up the same chooser.
+      setMessage({ tone: 'problem', text: offerTheChooser(err) ?? (err as Error).message })
     } finally {
       setBusy(null)
     }
@@ -302,11 +342,21 @@ export default function QuoteEditor({
   const blockers = useMemo(() => {
     const problems: string[] = []
     if (draft.customer.name.trim() === '') problems.push('The customer needs a name')
+    /**
+     * The rule this whole screen turns on: a read that found several possible
+     * ledgers has filled nothing in, and a quotation cannot be completed until
+     * a person says which company it is for. The server refuses this too — see
+     * requireCustomerChoice — because a greyed-out button is a suggestion and
+     * this is not one.
+     */
+    if ((draft.customerCandidates?.length ?? 0) > 0) {
+      problems.push('Choose which customer this quotation is for')
+    }
     if (draft.items.length === 0) problems.push('A quotation needs at least one line')
     if (draft.items.some((i) => i.desc.trim() === '')) problems.push('Every line needs a description')
     if (draft.initials.trim() === '') problems.push('Initials are needed to allocate a reference')
     return problems
-  }, [draft.customer.name, draft.items, draft.initials])
+  }, [draft.customer.name, draft.customerCandidates, draft.items, draft.initials])
 
   const unpriced = draft.items.filter((i) => i.rate === 0).length
 
@@ -340,10 +390,28 @@ export default function QuoteEditor({
       })
       onSaved(quote)
     } catch (err) {
-      setError((err as Error).message)
+      setError(offerTheChooser(err) ?? (err as Error).message)
     } finally {
       setSaving(false)
     }
+  }
+
+  /**
+   * A save refused for not naming a customer puts the chooser back on screen.
+   *
+   * The case that needs it is ordinary rather than exotic: every quotation
+   * saved before 004 has no ledger recorded, so opening one from History and
+   * revising it arrives here with nothing read and nothing to choose from. The
+   * server sends the candidates with the refusal precisely so this is one
+   * click rather than a retyped name.
+   */
+  function offerTheChooser(err: unknown): string | null {
+    if (!(err instanceof ApiError) || err.status !== 409) return null
+    const offered = err.body?.customerCandidates
+    if (!Array.isArray(offered) || offered.length === 0) return null
+
+    onDraftChange({ ...draft, customerCandidates: offered as CustomerCandidate[] })
+    return err.message
   }
 
   return (
@@ -422,6 +490,42 @@ export default function QuoteEditor({
 
       {/* --- header fields --- */}
       <h3 className="label mb-1.5">Who it is for</h3>
+
+      {/*
+        Above the fields, not inside them, and that placement is the argument.
+        While this is on screen the five customer boxes below are EMPTY — the
+        read deliberately filled nothing in, because the thread named a company
+        that answers to several ledgers with different GSTINs and ship-to
+        states. Putting the chooser first means the desk reads the question
+        before they see the blanks and start typing into them.
+      */}
+      <CustomerChooser
+        candidates={draft.customerCandidates ?? []}
+        readName={draft.customer.name}
+        onChoose={(candidate) =>
+          onDraftChange({
+            ...draft,
+            customer: candidate.customer,
+            customerId: candidate.record.id,
+            customerOffList: false,
+            customerCandidates: [],
+            contact: candidate.record.contact || draft.contact,
+            email: candidate.record.email || draft.email,
+          })
+        }
+        onDismiss={() =>
+          // Not on the list. The thread's name stays in the box to be typed
+          // over, everything else is the desk's to fill, and it is recorded as
+          // a new customer on save.
+          onDraftChange({
+            ...draft,
+            customerId: null,
+            customerOffList: true,
+            customerCandidates: [],
+          })
+        }
+      />
+
       <div className="panel mb-4 grid grid-cols-3 gap-x-5 gap-y-3 p-4">
         <Field label="Date">
           <input
@@ -435,12 +539,49 @@ export default function QuoteEditor({
           </p>
         </Field>
 
-        <Field label="Salesperson initials">
-          <input
-            value={draft.initials}
-            onChange={(e) => set({ initials: e.target.value.toUpperCase().slice(0, 4) })}
-            className={`${inputClass} font-mono uppercase`}
-          />
+        {/*
+          ONE CHOICE SETS FIVE FIELDS, because on this document they are not
+          five independent facts — they are one person. The initials pick the
+          reference series, the name signs it, and the contact number, email and
+          closing "call us at" numbers are all theirs. Typed separately they
+          drift: a quotation numbered .../LD/ over Rakhi Gupte's direct line is
+          a document neither of them can answer the phone for.
+
+          Everything it sets stays editable underneath, so a stand-in signing
+          for a colleague is still one field to change rather than a locked box.
+        */}
+        <Field label="Prepared by">
+          <select
+            value={
+              SALESPEOPLE.find((person) => person.initials === draft.initials)?.initials ?? ''
+            }
+            onChange={(e) => {
+              const person = SALESPEOPLE.find((s) => s.initials === e.target.value)
+              if (!person) return
+              set({
+                initials: person.initials,
+                signatory: person.name,
+                contact: person.phone,
+                email: person.email,
+                queriesNumbers: person.queriesNumbers,
+              })
+            }}
+            className={inputClass}
+          >
+            {/* Only reachable by editing the fields below out of step with each
+                other; naming that state beats showing a blank select. */}
+            {!SALESPEOPLE.some((person) => person.initials === draft.initials) && (
+              <option value="">— {draft.initials || 'no initials'} —</option>
+            )}
+            {SALESPEOPLE.map((person) => (
+              <option key={person.initials} value={person.initials}>
+                {person.name} ({person.initials})
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-[11px] text-ink-faint">
+            sets the reference series, the signature, and the contact details below
+          </p>
         </Field>
 
         <Field label="Signatory">
@@ -456,11 +597,28 @@ export default function QuoteEditor({
             value={draft.customer.name}
             onChange={(name) => {
               setFilledFrom(null)
-              set({ customer: { ...draft.customer, name } })
+              /**
+               * TYPING OVER THE NAME UN-CHOOSES THE LEDGER, deliberately.
+               *
+               * Editing a chosen customer's spelling is fine and stays chosen —
+               * that is what the id is for. But retyping the name to something
+               * else while the id still points at the old ledger would save one
+               * company's name against another company's row, and quietly
+               * overwrite that row's address and GSTIN on the way. Clearing it
+               * means the desk is asked again, which is the correct cost.
+               */
+              set({
+                customer: { ...draft.customer, name },
+                customerId: null,
+                // A different name is a different question, so a previous
+                // "none of these" no longer answers it.
+                customerOffList: false,
+              })
             }}
             onPick={(customer) => {
               // One click instead of six fields — and the GSTIN can no longer
-              // be retyped wrong.
+              // be retyped wrong. Picking here IS a choice, so it clears the
+              // chooser as surely as choosing from it does.
               setFilledFrom(customer.name)
               onDraftChange({
                 ...draft,
@@ -471,9 +629,11 @@ export default function QuoteEditor({
                   gstin: customer.gstin,
                   state: customer.state,
                 },
+                customerId: customer.id,
+                customerOffList: false,
+                customerCandidates: [],
                 contact: customer.contact || draft.contact,
                 email: customer.email || draft.email,
-                tax: { ...draft.tax, mode: taxModeForState(customer.state) },
               })
             }}
             className={inputClass}
@@ -483,6 +643,27 @@ export default function QuoteEditor({
               filled from your customer list · edit anything and the change is remembered on save
             </p>
           )}
+          {/*
+            Which ledger this is going against, said out loud. Two ledgers of
+            one company are told apart by their address and GSTIN, both of which
+            are in boxes further down that nobody re-reads before saving — so
+            the fact that a choice was made, and is still in force, belongs
+            beside the name it was made for.
+          */}
+          {draft.customerId !== null && (draft.customerCandidates?.length ?? 0) === 0 && (
+            <p className="mt-1 text-[11px] text-accent">
+              going to this customer on your list
+              {draft.customer.gstin !== '' && ` · ${draft.customer.gstin}`}
+            </p>
+          )}
+          {draft.customerId === null && (draft.customerCandidates?.length ?? 0) === 0 &&
+            draft.customer.name.trim() !== '' && (
+              <p className="mt-1 text-[11px] text-ink-faint">
+                {draft.customerOffList === true
+                  ? 'quoting a company that is not on your list · it will be added when you save'
+                  : 'not on your customer list · it will be added when you save'}
+              </p>
+            )}
         </Field>
 
         <Field label="Kind attention">
@@ -506,13 +687,12 @@ export default function QuoteEditor({
           <Field label="Ship-to state">
             <select
               value={draft.customer.state}
-              onChange={(e) => {
-                const state = e.target.value
-                set({
-                  customer: { ...draft.customer, state },
-                  tax: { ...draft.tax, mode: taxModeForState(state) },
-                })
-              }}
+              // The state no longer touches the tax: the document carries one
+              // GST 18% row whoever it ships to. It is still stored, and still
+              // worth getting right — it is part of the customer's address on
+              // file, and the record is what a future tax question is answered
+              // from.
+              onChange={(e) => set({ customer: { ...draft.customer, state: e.target.value } })}
               className={inputClass}
             >
               <option value="">—</option>
@@ -549,28 +729,23 @@ export default function QuoteEditor({
           />
         </Field>
 
+        {/*
+          NOT A CONTROL ANY MORE. It was a mode dropdown — IGST as one row
+          against CGST + SGST as two — plus an editable rate, defaulted from the
+          ship-to state. The desk asked for one constant, and both of the
+          documents they supplied as correct carry a single "GST 18%" row
+          whatever state the customer ships to, so the choice was offering a way
+          to make the document disagree with the letterhead.
+
+          Shown rather than removed, because it is a number on the total and the
+          desk should be able to see what is being added without opening the
+          document. See the note beside GST_RATE_PERCENT for the one thing to
+          know before making it a control again.
+        */}
         <Field label="Tax">
-          <div className="flex items-center gap-2">
-            <select
-              value={draft.tax.mode}
-              onChange={(e) =>
-                set({ tax: { ...draft.tax, mode: e.target.value as 'IGST' | 'CGST+SGST' } })
-              }
-              className={inputClass}
-            >
-              <option value="IGST">IGST (one row)</option>
-              <option value="CGST+SGST">CGST + SGST (two rows)</option>
-            </select>
-            <input
-              type="number"
-              value={draft.tax.rate}
-              onChange={(e) => set({ tax: { ...draft.tax, rate: Number(e.target.value) } })}
-              className={`${inputClass} w-16 text-right font-mono`}
-            />
-            <span className="text-ink-muted">%</span>
-          </div>
+          <div className="calc px-2 py-1 font-mono text-[13px]">GST {GST_RATE_PERCENT}%</div>
           <p className="mt-1 text-[11px] text-ink-faint">
-            defaulted from the ship-to state — override freely
+            the same on every quotation — the letterhead's own single GST row
           </p>
         </Field>
       </div>
@@ -1062,6 +1237,12 @@ export function chooseRef(
  * quotation came out of rather than anything printed on it, and a thread that
  * has moved on is already said, in its own words, at the top of this screen.
  *
+ * `customerId` records WHICH ledger was billed and never appears on the
+ * letterhead, so it cannot make the file disagree with the screen — which is
+ * the only thing this comparison is for. It also cannot drift on its own:
+ * choosing a different ledger rewrites the address, GSTIN and ship-to state
+ * with it, and `customer` is compared.
+ *
  * Listed rather than assumed, because the type below is the complement of it:
  * a field that is not named here is a field the desk is answerable for.
  */
@@ -1073,6 +1254,7 @@ export const NOT_COMPARED = [
   'sourceThread',
   'status',
   'createdAt',
+  'customerId',
 ] as const
 
 /**
@@ -1111,13 +1293,21 @@ const COMPARED: {
       sameText(d.customer.address, s.customer.address) &&
       sameText(d.customer.attention, s.customer.attention) &&
       sameText(d.customer.gstin, s.customer.gstin) &&
-      // Never printed, but it decides the tax split and it is what the customer
-      // master learns from a write, so a record still holding the old state is a
-      // record this screen has quietly parted company with.
+      // Never printed, and it no longer decides the tax split either — but it
+      // is what the customer master learns from a write, so a record still
+      // holding the old state is a record this screen has quietly parted
+      // company with.
       sameText(d.customer.state, s.customer.state),
   },
   contact: { label: 'the contact number', unchanged: (d, s) => d.contact === s.contact },
   email: { label: 'the email address', unchanged: (d, s) => d.email === s.email },
+  queriesNumbers: {
+    label: 'the numbers in the closing',
+    // Compared, because it PRINTS: it is the "call us at" line above the
+    // signature. Switching who a quotation is from changes it along with the
+    // contact number and the signature, and all three have to reach the file.
+    unchanged: (d, s) => d.queriesNumbers === s.queriesNumbers,
+  },
   items: {
     label: 'the lines',
     unchanged: (d, s) =>

@@ -99,6 +99,7 @@ type CustomerHalf = Pick<
   | 'customerMissing'
   | 'customerConflicts'
   | 'customerNote'
+  | 'customerCandidates'
 >
 
 /** A sentence, never a stack — the promise ai.ts makes, kept here too. */
@@ -151,6 +152,10 @@ function customerFailed(reason: string): CustomerHalf {
     customerMissing: [],
     customerConflicts: [],
     customerNote: reason,
+    // Nothing was read, so there is nothing to have matched a ledger against.
+    // An empty shortlist here means "we never got as far as looking", which the
+    // screen reads correctly: it offers the typeahead, not a chooser.
+    customerCandidates: [],
   }
 }
 
@@ -160,8 +165,8 @@ function customerHalf(outcome: PromiseSettledResult<AiResult<ThreadRead>>): Cust
   }
   if (!outcome.value.ok) return customerFailed(outcome.value.reason)
 
-  const { extracted, onFile } = outcome.value.data
-  return resolveCustomer(extracted, onFile)
+  const { extracted, candidates } = outcome.value.data
+  return resolveCustomer(extracted, candidates)
 }
 
 /**

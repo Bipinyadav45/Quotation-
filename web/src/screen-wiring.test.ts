@@ -211,6 +211,8 @@ const SAVED: Quote = {
   id: 'q-028',
   ref: 'NCS/2026-27/Quotes/RG/028',
   revision: 0,
+  customerId: null,
+  queriesNumbers: '40668812/88',
   date: '2026-08-18',
   customer: {
     name: 'Morgan Stanley',
@@ -251,6 +253,8 @@ const SAVED: Quote = {
 const screenFor = (quote: Quote): QuoteDraft => ({
   date: quote.date,
   initials: 'RG',
+  customerId: quote.customerId,
+  queriesNumbers: quote.queriesNumbers,
   customer: {
     name: quote.customer.name,
     address: quote.customer.address,
@@ -285,6 +289,10 @@ const MOVED: Record<DocumentField, (draft: QuoteDraft) => QuoteDraft> = {
   customer: (d) => ({ ...d, customer: { ...d.customer, address: 'somewhere else entirely' } }),
   contact: (d) => ({ ...d, contact: '+91 22 0000 0000' }),
   email: (d) => ({ ...d, email: 'somebody.else@newtech.example' }),
+  // The closing's "call us at" numbers. They print, so a change to them has to
+  // reach the file like any other — see SALESPEOPLE for why they are not a
+  // company constant.
+  queriesNumbers: (d) => ({ ...d, queriesNumbers: '40668803/40668888' }),
   signatory: (d) => ({ ...d, signatory: 'S Nair' }),
   // Reordered, not retyped: a quotation whose lines are in a different order is
   // a different document, and a length-only check would call this unchanged.

@@ -106,9 +106,34 @@ export const QuoteSchema = z.object({
   /** ISO 8601 */
   date: z.string(),
   customer: CustomerSchema,
+  /**
+   * WHICH ledger in the customer master this quotation was addressed to.
+   *
+   * `customer.name` is the text that PRINTED; this is who it was. They are not
+   * the same fact, and the list is the reason: sixteen ledgers are spelled
+   * some version of "Datamatics Global Services Limited" and three Azentio
+   * sites share a GSTIN, so a name alone cannot say which entity was billed.
+   *
+   * Null for a company quoted deliberately off the list, and for any quotation
+   * saved before 004 existed — inventing a ledger for those now would be a
+   * guess recorded as a fact.
+   */
+  customerId: z.string().nullable().default(null),
   contact: z.string(),
   email: z.string(),
   signatory: z.string(),
+  /**
+   * The closing line's numbers — "please call us at 40668812/88".
+   *
+   * The salesperson's, not the company's: the desk's two people close their
+   * documents with different numbers. Stored beside contact, email and
+   * signatory because a quotation records what was SENT, so a number that
+   * changes later must not rewrite a document already with a customer.
+   *
+   * Blank on every quotation saved before 005, and the renderer falls those
+   * back to the initials in the reference — see salespersonByInitials.
+   */
+  queriesNumbers: z.string().default(''),
   items: z.array(QuoteItemSchema),
   tax: z.object({ mode: TaxModeSchema, rate: z.number().int() }),
   terms: TermsSchema,
@@ -168,9 +193,48 @@ export const SaveQuoteRequestSchema = z.object({
   /** Drives the reference series, e.g. "RG". */
   initials: z.string().min(1, 'Initials are needed to allocate a reference'),
   customer: CustomerSchema,
+  /**
+   * The ledger the desk SELECTED, when they selected one.
+   *
+   * This is the field that makes "pick the company" a rule rather than a screen
+   * that can be walked past. The server refuses a save whose customer name
+   * matches ledgers on file unless one of them is named here — see
+   * requireCustomerChoice in routes/quote.ts. Sending it IS the act of
+   * choosing, which is why it is not merely a hint.
+   *
+   * Omitted means no ledger was picked, and that is only allowed when the name
+   * matches nothing on file: a company being quoted before Tally has it.
+   */
+  customerId: z.string().optional(),
+  /**
+   * "None of these — this company is not on my list."
+   *
+   * The deliberate escape hatch from the rule above, and it has to be explicit
+   * rather than inferred from a blank customerId, because those two situations
+   * look identical on the wire and mean opposite things: one is a desk that has
+   * not answered the question yet, the other is a desk that has answered it.
+   * Quoting a company before Tally has it is ordinary and must stay possible;
+   * doing it BY ACCIDENT, because a chooser was scrolled past, is the thing
+   * being prevented.
+   *
+   * Ignored when customerId is present — a chosen ledger is not off the list.
+   */
+  customerOffList: z.boolean().optional(),
   contact: z.string(),
   email: z.string(),
   signatory: z.string(),
+  /**
+   * The closing line's numbers — "please call us at 40668812/88".
+   *
+   * The salesperson's, not the company's: the desk's two people close their
+   * documents with different numbers. Stored beside contact, email and
+   * signatory because a quotation records what was SENT, so a number that
+   * changes later must not rewrite a document already with a customer.
+   *
+   * Blank on every quotation saved before 005, and the renderer falls those
+   * back to the initials in the reference — see salespersonByInitials.
+   */
+  queriesNumbers: z.string().default(''),
   items: z.array(QuoteItemSchema).min(1, 'A quotation needs at least one line'),
   tax: z.object({ mode: TaxModeSchema, rate: z.number().int() }),
   terms: TermsSchema,
@@ -241,8 +305,29 @@ export const UpdateQuoteRequestSchema = SaveQuoteRequestSchema.extend({
 export type UpdateQuoteRequest = z.infer<typeof UpdateQuoteRequestSchema>
 
 /**
- * A remembered customer. Built from saved quotations rather than typed into a
- * screen of its own — see server/src/lib/customers.ts.
+ * The five customer fields a read can put on a draft.
+ *
+ * All five are present and all five are strings: a field the read could not
+ * determine is blank, and the blank is named in `customerMissing` rather than
+ * left out of the object for the client to guess about.
+ */
+export const ResolvedCustomerSchema = z.object({
+  name: z.string(),
+  address: z.string(),
+  attention: z.string(),
+  gstin: z.string(),
+  state: z.string(),
+})
+export type ResolvedCustomer = z.infer<typeof ResolvedCustomerSchema>
+
+/**
+ * One ledger of the customer master — the desk's Tally sundry debtors, plus
+ * whatever quoting off that list has added. See server/src/lib/customers.ts.
+ *
+ * `id` is the identity. The NAME is not, and nothing may treat it as one: the
+ * real list holds sixteen ledgers spelled some version of "Datamatics Global
+ * Services Limited", and three Azentio sites that share a name AND a GSTIN and
+ * differ only in their address.
  */
 export const CustomerRecordSchema = CustomerSchema.extend({
   id: z.string(),
@@ -251,10 +336,57 @@ export const CustomerRecordSchema = CustomerSchema.extend({
   /** Our contact and email as used for this customer. */
   contact: z.string(),
   email: z.string(),
+  /**
+   * Non-India for the five ledgers that are, and the reason `state` is blank on
+   * them: "ship-to state" has no meaning for a Hong Kong address and must not
+   * be guessed into one, because it decides the tax split.
+   */
+  country: z.string().default('India'),
+  /** Tally's own: 'Regular', 'Regular - SEZ', 'Unregistered/Consumer'. */
+  regType: z.string().default(''),
+  /** 'tally' — from the debtors export. 'quote' — learned from a save. */
+  source: z.enum(['tally', 'quote']).default('quote'),
   quoteCount: z.number().int(),
   lastUsedAt: z.string(),
 })
 export type CustomerRecord = z.infer<typeof CustomerRecordSchema>
+
+/**
+ * A ledger the thread might have meant, offered for a person to choose between.
+ *
+ * The reason this type exists at all: reading "Azentio Software Pvt Ltd" out of
+ * an email does not identify a customer, it narrows the list to six. What the
+ * chooser needs beyond the record itself is why it is on screen — `gstinMatch`
+ * earns a row the top of the list — and the desk needs the ADDRESS visible,
+ * because for the three Azentio sites it is the only thing that differs.
+ */
+export const CustomerCandidateSchema = z.object({
+  record: CustomerRecordSchema,
+  /** 0..1 — how much of the name the thread gave this ledger accounts for. */
+  score: z.number(),
+  /** The thread's own GSTIN is this ledger's. Never decisive on its own. */
+  gstinMatch: z.boolean(),
+  /**
+   * Exactly what the draft becomes if this candidate is chosen — the ledger
+   * merged with the thread, per field, by the precedence in
+   * extractCustomer.mergeWithLedger.
+   *
+   * Computed for every candidate up front rather than for the one that wins,
+   * which is worth a paragraph because it looks like waste. It is not: it makes
+   * choosing instant and offline, it keeps ONE implementation of a precedence
+   * that has real subtleties in it — the thread's Kind attention beats the
+   * ledger's, a flattened stored address gets repaired — and the alternative
+   * was a second round trip that re-read the thread, or shipping the raw
+   * extraction to the browser so it could merge there. At a dozen candidates of
+   * pure string work, this is the cheap option as well as the clear one.
+   */
+  customer: ResolvedCustomerSchema,
+  /** Fields where the thread disagrees with THIS ledger. Never a blank. */
+  conflicts: z.array(z.string()).default([]),
+  /** Said about this ledger only — a disagreement, or an address repaired. */
+  note: z.string().optional(),
+})
+export type CustomerCandidate = z.infer<typeof CustomerCandidateSchema>
 
 export const CustomerSearchResponseSchema = z.object({
   customers: z.array(CustomerRecordSchema),
@@ -288,32 +420,6 @@ export const ExtractedCustomerSchema = z.object({
 })
 export type ExtractedCustomer = z.infer<typeof ExtractedCustomerSchema>
 
-export const ExtractCustomerResponseSchema = z.object({
-  ok: z.boolean(),
-  /** Present when ok. */
-  extracted: ExtractedCustomerSchema.optional(),
-  /** The matching row already on file, which should win over a fresh read. */
-  onFile: CustomerRecordSchema.nullable().optional(),
-  /** Present when not ok — a sentence, never a stack. */
-  reason: z.string().optional(),
-})
-
-/**
- * The five customer fields a read can put on a draft.
- *
- * All five are present and all five are strings: a field the read could not
- * determine is blank, and the blank is named in `customerMissing` rather than
- * left out of the object for the client to guess about.
- */
-export const ResolvedCustomerSchema = z.object({
-  name: z.string(),
-  address: z.string(),
-  attention: z.string(),
-  gstin: z.string(),
-  state: z.string(),
-})
-export type ResolvedCustomer = z.infer<typeof ResolvedCustomerSchema>
-
 /**
  * What the one AI button answers with: the line items and the customer, read in
  * a single pass and already resolved against the customer master, so the draft
@@ -341,13 +447,30 @@ export const AiReadResponseSchema = ParseResponseSchema.extend({
    *
    * `customerFrom` records where the winners came from but never what was
    * overruled, so a customer who has moved office got last year's address on
-   * their proforma invoice and nobody was told. This is the channel that says
+   * their quotation and nobody was told. This is the channel that says
    * so — and it is deliberately narrow: a disagreement is worth a sentence,
    * "we used your customer list again" on every repeat quotation is not.
    */
   customerConflicts: z.array(z.string()).default([]),
   /** Why the read failed, or why a value was dropped. Absent when there is nothing to say. */
   customerNote: z.string().optional(),
+  /**
+   * The ledgers this thread might mean, best first — and the reason the five
+   * fields above may come back blank on a read that worked perfectly.
+   *
+   * WHEN THIS IS NON-EMPTY, NOTHING WAS FILLED IN. That is the rule, and it is
+   * the whole point: a thread naming "Morgan Stanley" matches seventeen ledgers
+   * across ten GSTINs and three states, so filling the draft from the
+   * best-scoring one is picking a company's tax registration by coin toss. The
+   * desk picks; until they do, the customer block stays empty and the save is
+   * refused.
+   *
+   * Empty means there was nothing to choose between — the master holds no
+   * ledger this thread could plausibly mean — and only then do the thread's own
+   * values land on the draft, which is the ordinary case for a company being
+   * quoted before Tally has it.
+   */
+  customerCandidates: z.array(CustomerCandidateSchema).default([]),
 })
 export type AiReadResponse = z.infer<typeof AiReadResponseSchema>
 

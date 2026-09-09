@@ -335,32 +335,252 @@ deleted, and the counter lives in it.
    Both fixed; `.preview/ours.png` now matches `.preview/original.png` on one
    page. Re-run any time with `npm run preview`.
 
-3. **Customer details are typed by hand.** PROMPT.md has no customer master, so
-   the editor starts with blank customer fields. A master would be the obvious
-   next addition.
+3. ~~Customer details are typed by hand.~~ **Resolved — the master is the desk's
+   Tally sundry debtors, imported whole** (25 August 2026). See §8.
 
-4. **One salesperson is seeded** (`RG`, Rakhi Gupte). Reference series are
-   per-person and already independent; more people is a data change, not a code
-   change.
+4. ~~One salesperson is seeded.~~ **Two now** — `RG` Rakhi Gupte and `LD` Linda
+   D'mello (26 August 2026). It was *not* purely a data change, which is worth
+   recording: the closing "call us at" numbers were a company constant baked
+   into the template at build time, and they are per-person. See §9.
 
-5. **A test quotation sits in the dev database** (`NCS/2026-27/Quotes/RG/001`)
-   so the History screen is not empty. Delete `data/quotes.db` to start clean.
+5. ~~A test quotation sits in the dev database.~~ **Cleared** (25 August 2026).
+   The 32 scratch quotations and the five stub customers behind them were
+   deleted at the desk's request when the real debtors list came in; `data/quotes.db`
+   now holds the 225 imported ledgers and no quotations.
 
 6. **`npm audit` reports 5 advisories** in the dependency tree, all transitive
    through build tooling. Not triaged.
 
 ---
 
-## 8 · If you pick this up cold
+## 8 · The customer master, and why a name is not an identity
+
+**25 August 2026.** The desk supplied `Resources/List of Sundry Debtors with
+address and GSTIN.xlsx` — 225 ledgers out of Tally — with one instruction about
+how to treat it: *many companies have the same name but their locations and GST
+numbers differ; treat them as separate entities, and do not complete a
+quotation unless the company is selected.*
+
+### What the file actually says
+
+| | |
+|---|---|
+| Ledgers | 225 |
+| Ledger names that repeat | **0** — Tally keeps them unique |
+| GSTINs held by more than one ledger | **39** |
+| Spellings of "Datamatics Global Services Limited" | 14, across 4 GSTINs |
+| Ledgers answering to "Morgan Stanley" | 17, across 5 GSTINs and 3 states |
+| Azentio sites sharing GSTIN `27AAUCA4876F1Z4` | 3, differing only by address |
+
+So the ledger name is a usable key and the *company* name is not — and the thing
+that separates two ledgers is, in the worst case, only the address.
+
+### The bug this was heading for
+
+`extractCustomer.matchOnFile` fetched the typeahead's first five hits, scored
+them, took the single best above 0.75 and returned it as "the record already on
+file for this customer". `App.tsx` wrote it onto the draft. The review panel
+that used to stand in front of that was removed on 19 August.
+
+Against this list, a thread saying "Morgan Stanley Advantage Services Pvt Ltd"
+scores ~1.0 against seven ledgers spanning three GSTINs and three states, and
+one of them won on tie-break. The ship-to state decides IGST versus CGST+SGST,
+so this was not only the wrong address — it was a coin toss over the tax
+treatment, applied silently.
+
+Two smaller things were wrong with the same code path: the candidates came from
+`searchCustomers`, which ranks by prefix and recency rather than likeness, so
+the right ledger was often not among the five that got scored; and the raw Dice
+score it thresholded on is inflated by corporate boilerplate — "Foo Services Pvt
+Ltd" against "Bar Services Pvt Ltd" scores 0.75, above the threshold for a
+silent write.
+
+### What replaced it
+
+- **004 removed `UNIQUE (lower(name))`** and made `customers.id` the identity.
+  `quotes.customer_id` records which ledger was billed; null for a company
+  quoted off the list, and for every quotation saved before this.
+- **`rankCandidates` returns a list.** It strips corporate forms (`ltd`, `pvt`,
+  `llp`…) and scores by *containment* of the remaining tokens in the ledger's —
+  asking "is everything the thread named present here?" rather than Dice's "are
+  these two names alike?", which punishes a ledger for carrying the branch
+  suffix that makes it useful. The threshold went *down*, from 0.75 to 0.6:
+  it no longer has to make a silent write safe, only decide whether to show a
+  row.
+- **A document-frequency stop list was tried and rejected.** Measured on this
+  file, "datamatics" appears in 19 of 225 rows (8.4%), which ranks it above
+  "technologies" (8.0%) on frequency alone — and it is the single most
+  identifying word anyone could type. Frequency measures how many branches a
+  customer has, not how little a word says. The hand-written list is correct
+  here, and deliberately excludes "Global", "Staffing" and "Business Solutions":
+  those separate three real Datamatics entities.
+- **Nothing is filled in while a choice is outstanding.** The name survives, so
+  the chooser can ask its question and "none of these" leaves something to type
+  over; the four fields that decide what prints and what tax applies stay blank.
+- **Each candidate carries the block it would produce**, merged by the old
+  precedence table (now `mergeWithLedger`). Choosing is therefore instant and
+  offline, and the precedence — the thread's Kind attention beats the ledger's,
+  a flattened stored address gets repaired — lives in one place.
+- **The refusal is server-side.** `resolveCustomerChoice` answers 409 with the
+  candidates. Four things count as answering: an id, "not on my list", an exact
+  ledger name (unique by construction — this is what keeps re-quoting a customer
+  frictionless), or nothing on the list matching at all.
+
+### What the import had to repair
+
+Tally flattens a multi-line address into one cell, joining the lines with a
+comma — so `,,` is where a line break was. `"Office No. 501 & 503, 5th Floor,,
+Light Bridge, Saki Vihar Road,, Andheri-East, Mumbai-400072"` is a three-line
+address, and §11's block prints one paragraph per line. 183 of the 225 addresses
+were rebuilt this way; imported flat they would each have printed as one line
+running past the column, and `lostLineStructure` would have spent every read
+repairing what could be stored correctly once.
+
+Also stripped: the `` Tally writes before "Not Applicable", and stray
+carriage returns and tabs — they print as boxes on a quotation.
+
+The import reports what it will not fix, and imported all 225 regardless:
+
+- `CBI SPECIAL UNIT` — GSTIN `27MUMS49872E1D9` is not a GSTIN. Dropped rather
+  than stored; half a number on a tax document is worse than a blank.
+- `INVESTEC CAPITAL SERVICES (INDIA) PVT. LTD. B WING` — state "Not Applicable"
+  on an Indian ledger. Left blank; the report names the state its GSTIN is
+  registered in, but does not fill it in — registration is not ship-to.
+- `K.M. & CO. (SALE)` — state says Maharashtra, GSTIN is registered in Gujarat.
+- `VALUE POINT SYSTEMS PVT. LTD. - HYD` — Andhra Pradesh against a Telangana
+  GSTIN.
+
+The last two are one field wrong in Tally and only the desk knows which, so
+neither is corrected here.
+
+### Reading .xlsx without a dependency
+
+`server/src/lib/xlsx.ts` is ~80 lines over `pizzip`, which was already present
+for docxtemplater. The `xlsx` package is 7 MB and has carried
+prototype-pollution and ReDoS advisories; this reads one sheet of one
+spreadsheet a human exports by hand, and needs no formulas, dates, styles or
+writing. Every cell comes back as a string — a GSTIN is not a number and a
+pincode with a leading zero is not a number.
+
+---
+
+## 9 · Four changes the desk asked for
+
+**26 August 2026.**
+
+### The tax stopped being a choice
+
+The editor offered a mode — IGST as one row against CGST + SGST as two — and an
+editable rate, defaulted from the ship-to state. It is now a constant: one row
+reading **GST 18%**, on every quotation.
+
+Both documents the desk supplied as correct print exactly that, whatever state
+the customer ships to, so the control existed only to make the document disagree
+with the letterhead. Three call sites set the mode from the state — the chooser,
+the typeahead and the state dropdown — and all three are gone; the state is
+still stored, because it is part of the customer's address on file.
+
+`computeTotals` still knows how to split it and every quotation stores the mode
+it was saved with, so nothing was deleted and nothing needs rebuilding to put
+the dropdown back. **Worth knowing if it ever comes back:** for an intra-state
+sale — both parties in Maharashtra, which is over half the customer list — the
+tax is legally CGST 9% + SGST 9%, and a tax *invoice* has to show the halves
+separately. The total is identical, and this document is a quotation.
+
+### The PDF is editable, and now provably
+
+It already was: real text, no encryption, tagged. The change is a guarantee
+rather than a fix.
+
+Word's `ExportAsFixedFormat` was called with two arguments and therefore its
+defaults, and one of those defaults is **`BitmapMissingFonts = TRUE`** — "if a
+font cannot be embedded, draw that text as a picture instead". A quotation
+exported that way has no text at all: nothing to select, search or edit. The
+export succeeds, there is no warning, and it would happen only for the
+quotations that used a glyph Word could not embed. It is now passed `$false`
+explicitly, along with `DocStructureTags = $true` for the tag tree that tells an
+editor which runs are paragraphs and which are table cells.
+
+Three tests assert the *properties*, not the flag: extractable text, no
+`/Encrypt` dictionary of any kind (which is also how "printing allowed, editing
+not" is expressed), and embedded fonts.
+
+**Measured and not pursued:** Word subsets fonts on PDF export and offers no way
+to stop it — `SaveSubsetFonts` and `EmbedTrueTypeFonts` are DOCX-save settings
+and changed the output not at all, so they were removed rather than left in with
+a comment claiming otherwise. The faces come out as `BCDEEE+TimesNewRomanPSMT`.
+That is fine here: the letterhead is Times New Roman and Arial, which every
+machine already has, so a subset resolves against the local copy. A subset only
+bites for a face the editing machine does not own.
+
+### Two people sign these documents
+
+`LD` Linda D'mello joins `RG` Rakhi Gupte, from the quotation she sent
+(`Supporting Documents/HCL Quote 34 Dt. 30.07.2026.pdf`). Four lines are hers
+and none of them is shared:
+
+| | Rakhi Gupte | Linda D'mello |
+|---|---|---|
+| Reference | `NCS/2026-27/Quotes/**RG**/030` | `NCS/2026-27/Quotes/**LD**/34` |
+| Contact | 022-40668809 | 40668803 |
+| Email | rakhi.gupte@newtech.in | Linda.pdmello@newtech.**co**.in |
+| Closing | call us at 40668812/88 | call us at 40668803/40668888 |
+
+The fourth is the one that was wrong. It was `COMPANY.queriesNumbers`,
+interpolated into the template as a literal at build time, so Linda's quotations
+would have closed with Rakhi's numbers. It is a `{queriesNumbers}` tag now, and
+005 stores it on the quotation beside `contact`, `email` and `signatory` — a
+quotation records what was **sent**, so a number that changes later must not
+rewrite a document already with a customer. Rows saved before 005 have a blank
+and fall back to whoever the initials in their reference belong to.
+
+Two spellings deliberately not corrected: `Linda.pdmello` carries the `p`, and
+her surname carries a typographic apostrophe (U+2019). Both are copied from the
+document she sent, and there is a test for the apostrophe surviving the trip
+through docxtemplater into XML.
+
+The editor now has a **Prepared by** picker rather than a free-text initials
+box, because on this document those four fields are not four facts — they are
+one person, and typed separately they drift. A quotation numbered `.../LD/` over
+Rakhi's direct line is one neither of them can answer the phone for. Everything
+it sets stays editable.
+
+### It is a Quotation again
+
+"Proforma Invoice" was reverted to "Quotation" in both places the document says
+it, which puts it back in agreement with every reference document in the
+repository — and with the reference series, `NCS/<FY>/Quotes/...`, which never
+stopped saying Quotes. It also reached further than the two headings: the
+downloaded filename (`Quotation-Morgan-2026-07-10.pdf`), the Prices term, and
+the covering-email prompt, which was telling the model it was writing about a
+proforma invoice.
+
+The test that used to assert the two lines differed from the reference document
+now asserts they match, and that nothing anywhere still says "proforma".
+
+---
+
+## 10 · If you pick this up cold
 
 Read in this order:
 
 1. `PROMPT.md` — the specification
 2. `shared/schema.ts` — §4's data model, and the one contract in the system
-3. `server/src/lib/tokenize.ts` — the correction that matters most, with the
-   reasoning in the comment
-4. `server/src/lib/reconcile.test.ts` — what the product is supposed to do
+3. `server/src/lib/similarity.ts` — the correction that matters most, with the
+   reasoning in the comment. (It was `tokenize.ts` when this list was written,
+   and `reconcile.test.ts` went with §6's comparison on 19 August.)
+4. `server/src/lib/parser.test.ts` — four real threads out of the desk's
+   mailbox, each added after it broke something
+5. `server/src/lib/customerMatch.ts` — why identifying a customer returns a
+   list, and §8 above for what the real data does to anything that returns one
 
-The one rule worth internalising before changing anything: **money is integer
-paise, everywhere, and nothing divides by 100 in floating point.** A quotation
-that is one paisa off is a quotation the customer's system rejects.
+Two rules worth internalising before changing anything:
+
+**Money is integer paise, everywhere, and nothing divides by 100 in floating
+point.** A quotation that is one paisa off is a quotation the customer's system
+rejects.
+
+**A customer is a ledger, not a name.** Fourteen ledgers are spelled some
+version of "Datamatics Global Services Limited" and three Azentio sites share a
+name and a GSTIN. Nothing may collapse two rows because their names match, and
+nothing may pick one of them on the desk's behalf.

@@ -4,13 +4,13 @@ import { LlmParsedLineSchema, type ParsedLine } from '@shared/schema.js'
 import { askAi, type AiResult } from './ai.js'
 import { toParsedLines } from './llmParser.js'
 import {
+  candidatesOnFile,
   ExtractedCustomerSchema,
   INTERNAL_EMAIL_DOMAINS,
-  matchOnFile,
   rejectOwnDetails,
   type ExtractedCustomer,
 } from './extractCustomer.js'
-import type { CustomerRecord } from './customers.js'
+import type { Candidate } from './customerMatch.js'
 
 /**
  * Reading a thread — the line items AND the customer — in ONE call.
@@ -167,7 +167,13 @@ export interface ThreadRead {
   /** Lines whose rate could not be read — surfaced, never silently dropped. */
   rejected: string[]
   extracted: ExtractedCustomer
-  onFile: CustomerRecord | null
+  /**
+   * Every ledger on the customer master this thread could mean, best first —
+   * a LIST, because a name is not an identity here. It replaced a single
+   * `onFile` record, which was the shape that let one Morgan Stanley ledger out
+   * of seventeen be chosen by score and written to a draft unreviewed.
+   */
+  candidates: Candidate[]
 }
 
 /**
@@ -215,9 +221,9 @@ export async function readThreadWithAi(thread: string): Promise<AiResult<ThreadR
   // The last line of defence against our own details reaching a document
   // addressed to us — unchanged from when the customer read stood alone.
   const extracted = rejectOwnDetails(result.data.customer)
-  const onFile = extracted.name.trim() === '' ? null : matchOnFile(extracted.name)
+  const candidates = candidatesOnFile(extracted)
 
-  const data: ThreadRead = { lines, rejected, extracted, onFile }
+  const data: ThreadRead = { lines, rejected, extracted, candidates }
 
   // Oldest out first. A desk works on one thread at a time, so this holds far
   // more than a day's work and the eviction is a backstop rather than a policy.

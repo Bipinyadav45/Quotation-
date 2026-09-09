@@ -5,7 +5,12 @@ import type { Quote } from '@shared/schema.js'
 import { computeTotals, formatPaise, pad2 } from '@shared/money.js'
 import { formatDateParts, fromISODate } from '@shared/fy.js'
 import { splitDescription } from '@shared/description.js'
-import { COMPANY, gstinLine } from '@shared/company.js'
+import {
+  COMPANY,
+  DEFAULT_SALESPERSON,
+  gstinLine,
+  salespersonByInitials,
+} from '@shared/company.js'
 import { config } from '../config.js'
 
 /**
@@ -72,6 +77,12 @@ export interface RenderModel {
    * a value.
    */
   warranty: string
+  /**
+   * The closing line's numbers. The salesperson's, not the company's — see
+   * SALESPEOPLE in shared/company.ts, where both of the desk's own documents
+   * are quoted disagreeing about them.
+   */
+  queriesNumbers: string
   signatory: string
 }
 
@@ -115,8 +126,32 @@ export function buildRenderModel(quote: Quote): RenderModel {
     // asks whether there is a value: an accidental "  " would open term 5 and
     // print the label with nothing after it, the one line it exists to avoid.
     warranty: quote.terms.warranty.trim(),
+    /**
+     * Stored on the quotation since 005. A quotation saved before that has a
+     * blank, so it falls back to whoever the reference's initials belong to —
+     * which is how those documents still render the closing they were sent
+     * with. A salesperson who has since left the list falls back once more, to
+     * the person the desk defaults to, rather than printing "call us at" with
+     * nothing after it.
+     */
+    queriesNumbers:
+      quote.queriesNumbers.trim() ||
+      (salespersonByInitials(initialsOf(quote.ref)) ?? DEFAULT_SALESPERSON).queriesNumbers,
     signatory: quote.signatory,
   }
+}
+
+/**
+ * The initials out of NCS/2026-27/Quotes/RG/031 — the second-to-last segment.
+ *
+ * Read positionally rather than by pattern because that is what the reference
+ * is: refno.ts builds it from exactly these five parts. An unrecognisable
+ * reference yields '' and the caller falls back, which is the right answer for
+ * one typed by hand into an older record.
+ */
+function initialsOf(ref: string): string {
+  const parts = ref.split('/')
+  return parts.length >= 2 ? (parts[parts.length - 2] ?? '') : ''
 }
 
 export function renderDocx(quote: Quote): Buffer {
@@ -136,10 +171,10 @@ export function renderDocx(quote: Quote): Buffer {
   return doc.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' })
 }
 
-/** §8 — `ProformaInvoice-<CustomerFirstWord>-<date>.docx`, named for what the document is. */
+/** §8 — `Quotation-<CustomerFirstWord>-<date>.docx`, named for what the document is. */
 export function documentFilename(quote: Quote, extension: 'docx' | 'pdf'): string {
   const firstWord = quote.customer.name.trim().split(/\s+/)[0] ?? 'Customer'
   const safe = firstWord.replace(/[^A-Za-z0-9]/g, '')
   const rev = quote.revision > 0 ? `-Rev${quote.revision}` : ''
-  return `ProformaInvoice-${safe || 'Customer'}-${quote.date}${rev}.${extension}`
+  return `Quotation-${safe || 'Customer'}-${quote.date}${rev}.${extension}`
 }

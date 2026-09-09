@@ -16,7 +16,7 @@ import type { Quote } from '@shared/schema.js'
  */
 const QUOTE: Quote = {
   id: 't', ref: 'NCS/2026-27/Quotes/RG/001', revision: 0, date: '2026-08-20',
-  customer: { name: 'A', address: 'B', attention: 'C' },
+  customer: { name: 'A', address: 'B', attention: 'C' }, customerId: null, queriesNumbers: '40668812/88',
   contact: '1', email: 'e', signatory: 's',
   items: [{ desc: 'd', make: 'm', partCode: 'p', qty: 1, rate: 100 }],
   tax: { mode: 'IGST', rate: 18 },

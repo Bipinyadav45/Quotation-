@@ -1,21 +1,24 @@
 import { z } from 'zod'
-import type { AiReadResponse, ResolvedCustomer } from '@shared/schema.js'
-import { INDIAN_STATES } from '@shared/states.js'
+import type { AiReadResponse, CustomerCandidate, ResolvedCustomer } from '@shared/schema.js'
+import { INDIAN_STATES, normaliseGstin } from '@shared/states.js'
 import { config } from '../config.js'
-import { askAi, type AiResult } from './ai.js'
-import { findCustomerByName, searchCustomers, type CustomerRecord } from './customers.js'
-import { similarity, tokenize } from './similarity.js'
+import { allCustomers, type CustomerRecord } from './customers.js'
+import { rankCandidates, type Candidate } from './customerMatch.js'
 
 /**
- * Read the customer's details out of an RFQ thread.
+ * Read the customer's details out of an RFQ thread, and work out which ledgers
+ * on the customer master it could mean.
  *
  * The hard part is not extraction, it is knowing whose details to take: every
  * one of these threads carries Newtech's own signature block, usually several
  * times, and it is longer and tidier than the customer's. So the internal
  * domain is passed in and the model is told explicitly to skip it.
  *
- * Nothing here writes to a quotation. The result is a suggestion, shown with
- * its provenance and accepted field by field.
+ * Nothing here writes to a quotation, and — since the desk's Tally list came
+ * in — nothing here even DECIDES a customer. A thread naming "Morgan Stanley"
+ * matches seventeen ledgers across ten GSTINs and three states. What comes back
+ * is the shortlist and, for each entry, exactly what the draft would become if
+ * a person picked it. A person then picks it.
  */
 
 /**
@@ -35,7 +38,6 @@ export const ExtractedCustomerSchema = z.object({
   confidence: z.enum(['high', 'medium', 'low']),
 })
 export type ExtractedCustomer = z.infer<typeof ExtractedCustomerSchema>
-
 
 /**
  * Newtech's own mail domains, all of them.
@@ -58,53 +60,27 @@ export const INTERNAL_EMAIL_DOMAINS: readonly string[] = [
 ].filter((domain, index, all) => domain !== '' && all.indexOf(domain) === index)
 
 /**
- * How alike two names have to be before a stored record is treated as the same
- * company.
+ * Every ledger this thread could mean, best first.
  *
- * searchCustomers is a SQL substring match with no floor of its own: a thread
- * naming "Kirloskar" fetches every Kirloskar on the list, and taking the first
- * of them put one group company's address and GSTIN onto a document addressed
- * to another — with no review panel left in front of it.
+ * THIS REPLACED matchOnFile, and the difference is the point of the change.
+ * matchOnFile scored the typeahead's first five hits, took the single best
+ * above 0.75, and handed it back as "the record already on file for this
+ * customer" — from which a draft was filled with no review in between. Its own
+ * comment argued the threshold carefully and was right about everything except
+ * the shape of the answer: against a list holding seventeen Morgan Stanley
+ * ledgers, there IS no single best record, and the top-scoring one differs from
+ * the runner-up by an address, a GSTIN and a state that decides the tax split.
  *
- * priceHistory.ts has already argued the number, for this question in another
- * costume. Section 6's 0.42 is a PAIRING threshold: several candidates competed
- * and the best of them won. This is an IDENTITY threshold — a single stored
- * record either is this customer or is not, and nothing competes with it — so
- * it takes that file's 0.75. "Datamatics Global Services" against the stored
- * "Datamatics Global Services Limited" scores 0.857 and is kept; "Kirloskar"
- * against "Kirloskar Brothers Limited" scores 0.5 and is not.
- *
- * Erring strict is cheap and erring loose is not: a customer we fail to
- * recognise costs a re-typed GSTIN, one we recognise wrongly costs a different
- * company's GSTIN on a tax document.
+ * Scored over the whole master rather than the typeahead's first five, because
+ * that ranking is by prefix and recency and neither is likeness — the right
+ * ledger was routinely not among the five that got scored.
  */
-const NAME_MATCH_THRESHOLD = 0.75
-
-/**
- * The record already on file for this customer, or null.
- *
- * Exact name first — that arm was never the risky one, and it is untouched.
- * Only when it misses are the typeahead's candidates scored, and several are
- * fetched rather than one because searchCustomers ranks by prefix and recency,
- * neither of which is likeness. Nothing near enough is null rather than a best
- * effort: the thread's own values then stand, which is what the customer
- * actually wrote.
- */
-export function matchOnFile(name: string): CustomerRecord | null {
-  const exact = findCustomerByName(name)
-  if (exact) return exact
-
-  const wanted = tokenize(name)
-  if (wanted.size === 0) return null
-
-  let best: { record: CustomerRecord; score: number } | null = null
-  for (const candidate of searchCustomers(name, 5)) {
-    // No part codes in a company name, so there is no shared-code bonus to claim.
-    const score = similarity(wanted, tokenize(candidate.name), false)
-    if (best === null || score > best.score) best = { record: candidate, score }
-  }
-
-  return best !== null && best.score >= NAME_MATCH_THRESHOLD ? best.record : null
+export function candidatesOnFile(extracted: {
+  name: string
+  gstin?: string
+}): Candidate[] {
+  if (extracted.name.trim() === '') return []
+  return rankCandidates(extracted, allCustomers())
 }
 
 /**
@@ -155,6 +131,10 @@ export interface CustomerResolution {
    * itself failed; a read that succeeded and found nothing comes back with all
    * five fields blank and every label in customerMissing. AiReadResponseSchema
    * says why the two have to stay distinguishable.
+   *
+   * ALL FIVE ARE ALSO BLANK when customerCandidates is non-empty, and that is
+   * not a failure of any kind — it is the read having narrowed the master to a
+   * shortlist that only a person can choose from.
    */
   customer: ResolvedCustomer
   customerConfidence: AiReadResponse['customerConfidence']
@@ -162,34 +142,25 @@ export interface CustomerResolution {
   customerMissing: string[]
   /**
    * The fields where the source that LOST held a different, non-empty value —
-   * a disagreement between the thread and the file, never a blank. Plain
-   * strings rather than a type read off AiReadResponse because the shared
-   * schema has no such field yet, and a value being overruled in silence
-   * should not have to wait on a schema edit to stop being silent.
+   * a disagreement between the thread and the file, never a blank.
    */
   customerConflicts: string[]
   customerNote?: string
+  customerCandidates: CustomerCandidate[]
 }
 
 /**
- * A GSTIN is 15 characters: a two-digit state code, the holder's ten-character
- * PAN, an entity number, a fixed "Z", and a check character.
- */
-const GSTIN_SHAPE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/
-
-/**
- * Nobody reviews these on a panel before they land on a document any more, so a
- * freshly read GSTIN has to earn its place.
+ * Nobody reviews these on a panel before they land on a document, so a freshly
+ * read GSTIN has to earn its place.
  *
  * Case and stray spacing are normalised rather than rejected — a GSTIN is an
  * identifier, not prose, and "27 aabcu9603r1zm" is the same number badly typed.
  * Anything that is not the right shape is dropped whole: half a GSTIN on a tax
- * document is worse than a blank someone fills in.
+ * document is worse than a blank someone fills in. The shape itself now lives
+ * in shared/states.ts, because the debtors import applies the same rule to the
+ * same values arriving from Tally.
  */
-function cleanGstin(raw: string): string {
-  const value = raw.replace(/\s+/g, '').toUpperCase()
-  return value.length === 15 && GSTIN_SHAPE.test(value) ? value : ''
-}
+const cleanGstin = normaliseGstin
 
 /**
  * The ship-to state decides the tax mode (shared/states.ts), so a freshly read
@@ -204,47 +175,51 @@ function cleanState(raw: string): string {
   return INDIAN_STATES.find((state) => state.toLowerCase() === value) ?? ''
 }
 
-/**
- * Merge a fresh read with whatever is already on file into the block a draft is
- * filled from.
- *
- * Per field, never record-wise: a stored address beside a freshly read GSTIN is
- * an ordinary outcome, and taking either record whole would throw the other
- * half away. An empty value never wins, from either side — an absence is not a
- * statement that the field is empty.
- */
-export function resolveCustomer(
-  extracted: ExtractedCustomer,
-  onFile: CustomerRecord | null,
-): CustomerResolution {
-  const thread: ResolvedCustomer = {
+/** The thread's own five values, guarded. */
+function fromThread(extracted: ExtractedCustomer): ResolvedCustomer {
+  return {
     name: extracted.name.trim(),
     address: extracted.address.trim(),
     attention: extracted.attention.trim(),
     gstin: cleanGstin(extracted.gstin),
     state: cleanState(extracted.state),
   }
+}
+
+/**
+ * What the draft becomes if this ledger is the one.
+ *
+ * Per field, never record-wise: a ledger's address beside the thread's
+ * attention is the ordinary outcome, and taking either side whole would throw
+ * the other's half away. An empty value never wins, from either side — an
+ * absence is not a statement that the field is blank.
+ *
+ * Computed for EVERY candidate at read time rather than for the one that gets
+ * picked, which is what makes picking instant and keeps this precedence in one
+ * place. It is pure string work over at most a dozen rows.
+ */
+export function mergeWithLedger(
+  extracted: ExtractedCustomer,
+  onFile: CustomerRecord,
+): { customer: ResolvedCustomer; conflicts: string[]; note?: string } {
+  const thread = fromThread(extracted)
 
   /**
    * The same two guards over the stored side, and for a stronger reason than
    * over the thread's: on-file WINS for both of these fields, so an unchecked
-   * stored value is the one that reaches the document. A GSTIN typed into a
-   * quotation months ago was confirmed by somebody saving it, which is not the
-   * same as having been read. cleanGstin normalises rather than rejects, so a
-   * well-formed stored value comes back exactly as it was stored.
+   * stored value is the one that reaches the document. cleanGstin normalises
+   * rather than rejects, so a well-formed stored value comes back as stored.
    */
   const stored: ResolvedCustomer = {
-    name: onFile?.name.trim() ?? '',
-    address: onFile?.address.trim() ?? '',
-    attention: onFile?.attention.trim() ?? '',
-    gstin: cleanGstin(onFile?.gstin ?? ''),
-    state: cleanState(onFile?.state ?? ''),
+    name: onFile.name.trim(),
+    address: onFile.address.trim(),
+    attention: onFile.attention.trim(),
+    gstin: cleanGstin(onFile.gstin),
+    state: cleanState(onFile.state),
   }
 
   const customer: ResolvedCustomer = { name: '', address: '', attention: '', gstin: '', state: '' }
-  const customerMissing: string[] = []
   const conflicts: Record<Source, string[]> = { thread: [], 'on-file': [] }
-  const used = new Set<Source>()
 
   /**
    * The one case where a fresh read is allowed to beat the stored address.
@@ -257,17 +232,18 @@ export function resolveCustomer(
     /**
      * ATTENTION INVERTS THE PRECEDENCE, on purpose.
      *
-     * ExtractionResult above says a stored record beats a fresh read, and for
-     * the other four fields it does. Not for this one: the stored attention is
-     * whoever the LAST document was addressed to and can be months stale, while
-     * the thread is whoever is asking now. So the thread wins here and the file
-     * is only the fallback for when the thread names nobody. This is the
-     * instruction, not an oversight.
+     * A ledger beats a fresh read for the other four fields, and for this one
+     * it must not: the stored attention is whoever the LAST document was
+     * addressed to and can be months stale, while the thread is whoever is
+     * asking now. So the thread wins here and the ledger is only the fallback
+     * for when the thread names nobody. This is the instruction, not an
+     * oversight.
      *
      * ADDRESS INVERTS IT TOO, but only for the single case lostLineStructure
      * recognises: the same address, stored with its line breaks lost. That is a
-     * repair and not a change of mind, so it takes nothing away from the rule
-     * above — the file still wins wherever the two sides say different things.
+     * repair and not a change of mind. It fires far less than it used to — the
+     * debtors import rebuilds Tally's flattened addresses on the way in — but a
+     * row the master taught itself from an old save can still be in that state.
      */
     const order =
       field === 'attention' || (field === 'address' && repairedAddress)
@@ -275,14 +251,20 @@ export function resolveCustomer(
         : DEFAULT_ORDER
     const valueFrom = (source: Source) => (source === 'thread' ? thread : stored)[field]
 
-    const winner = order.find((source) => valueFrom(source) !== '')
-    if (!winner) {
-      customerMissing.push(FIELD_LABELS[field])
-      continue
-    }
+    /**
+     * NAME IS THE LEDGER'S, always — it is the one field selecting a customer
+     * actually decides. The thread's spelling of it is not a competing claim
+     * about who they are, and letting it win would put "Azentio" on a document
+     * whose GSTIN, address and state all came from AZENTIO SOFTWARE PVT LTD
+     * (MALAD). It is still editable on the draft.
+     */
+    const winner =
+      field === 'name' && stored.name !== ''
+        ? ('on-file' as Source)
+        : order.find((source) => valueFrom(source) !== '')
+    if (!winner) continue
 
     customer[field] = valueFrom(winner)
-    used.add(winner)
 
     /**
      * A repaired address is not a disagreement. The stored copy it displaced
@@ -292,12 +274,17 @@ export function resolveCustomer(
     if (field === 'address' && repairedAddress) continue
 
     /**
-     * ...and what the winner overruled. A customer who has moved office has
-     * the new address in the thread and last year's on file; the stored one
-     * wins, and the desk hears which fields it beat here rather than from the
-     * customer. Only a non-empty loser counts — an absence disagrees with
-     * nothing.
+     * ...and what the winner overruled. A customer who has moved office has the
+     * new address in the thread and last year's on file; the ledger wins, and
+     * the desk hears which fields it beat here rather than from the customer.
+     * Only a non-empty loser counts — an absence disagrees with nothing.
+     *
+     * The name is exempt: every branch ledger is spelled differently from how a
+     * thread writes the company, so flagging it would fire on nearly every
+     * quotation and teach the desk to stop reading these.
      */
+    if (field === 'name') continue
+
     for (const loser of order) {
       if (loser === winner) continue
       const beaten = valueFrom(loser)
@@ -308,50 +295,22 @@ export function resolveCustomer(
   }
 
   /**
-   * Where the surviving values actually came from. Nothing surviving at all
-   * only happens when there was no record to draw on, so the thread is the
-   * honest answer: it is the read that came back empty.
-   */
-  const customerFrom =
-    used.has('thread') && used.has('on-file')
-      ? 'both'
-      : used.has('on-file')
-        ? 'on-file'
-        : 'thread'
-
-  /**
-   * A guard dropping a value is not an error — the read worked, one field of it
-   * did not survive — but it is not silent either. Without this the blank looks
-   * like a thread that never mentioned the field. A dropped STORED value is
-   * announced for the same reason and needs it more: nobody has the customer
-   * list open while a quotation is being made, so a bad value sitting in it is
-   * only ever noticed here.
-   */
-  const dropped: Record<Source, string[]> = { thread: [], 'on-file': [] }
-  if (extracted.gstin.trim() !== '' && thread.gstin === '') dropped.thread.push('GSTIN')
-  if (extracted.state.trim() !== '' && thread.state === '') dropped.thread.push('ship-to state')
-  if ((onFile?.gstin.trim() ?? '') !== '' && stored.gstin === '') {
-    dropped['on-file'].push('GSTIN')
-  }
-  if ((onFile?.state.trim() ?? '') !== '' && stored.state === '') {
-    dropped['on-file'].push('ship-to state')
-  }
-
-  /**
-   * At most five sentences and usually none: either guard having dropped
-   * something, either source having been overruled, the stored address having
-   * been repaired. customerConflicts carries the same disagreements as labels,
-   * for a screen that would rather mark the fields than print a sentence — and
-   * deliberately not the repair, which is not one of them.
+   * A guard dropping a STORED value is not an error — the ledger is fine, one
+   * field of it is not — but it must not be silent either. Without this the
+   * blank reads as a customer who simply has no GSTIN, and nobody has the
+   * customer list open while a quotation is being made: this is the only place
+   * anyone finds out that a row needs fixing.
    *
-   * The repair is said out loud rather than done in silence, for the reason the
-   * dropped-stored note is: the record on the customer list is still broken,
-   * nobody has that list open while a quotation is being made, and this is the
-   * only place anyone finds out.
+   * Rarer than it was, because the debtors import refuses to store a malformed
+   * GSTIN in the first place and names the ledger in its report. Not gone: a
+   * row the master taught itself from an old save can still hold one.
    */
+  const dropped: string[] = []
+  if (onFile.gstin.trim() !== '' && stored.gstin === '') dropped.push('GSTIN')
+  if (onFile.state.trim() !== '' && stored.state === '') dropped.push('ship-to state')
+
   const notes = [
-    droppedNote(dropped.thread, 'thread'),
-    droppedNote(dropped['on-file'], 'on-file'),
+    droppedNote(dropped, 'on-file'),
     conflictNote(conflicts.thread, 'thread'),
     conflictNote(conflicts['on-file'], 'on-file'),
     repairedAddress ? REPAIRED_ADDRESS_NOTE : undefined,
@@ -359,15 +318,139 @@ export function resolveCustomer(
 
   return {
     customer,
+    conflicts: [...conflicts.thread, ...conflicts['on-file']],
+    ...(notes.length > 0 ? { note: notes.join(' ') } : {}),
+  }
+}
+
+/**
+ * Turn a read into what the screens work from.
+ *
+ * TWO OUTCOMES, and which one you get depends entirely on whether the master
+ * holds anything this thread could mean:
+ *
+ *   candidates found — NOTHING is filled in. The shortlist comes back, each
+ *     entry carrying the block the draft would take if it were chosen, and the
+ *     desk chooses. This is the rule the whole change exists for: a name is not
+ *     an identity on a list where seventeen ledgers answer to "Morgan Stanley".
+ *
+ *   nothing found — the thread's own guarded values fill the draft, exactly as
+ *     before. There is nothing to choose between, so there is nothing to ask
+ *     about; this is a company being quoted before Tally has it, which is
+ *     ordinary and must stay frictionless.
+ */
+export function resolveCustomer(
+  extracted: ExtractedCustomer,
+  candidates: readonly Candidate[],
+): CustomerResolution {
+  const thread = fromThread(extracted)
+
+  const dropped: string[] = []
+  if (extracted.gstin.trim() !== '' && thread.gstin === '') dropped.push('GSTIN')
+  if (extracted.state.trim() !== '' && thread.state === '') dropped.push('ship-to state')
+  const droppedThread = droppedNote(dropped, 'thread')
+
+  if (candidates.length > 0) {
+    const offered: CustomerCandidate[] = candidates.map((candidate) => {
+      const merged = mergeWithLedger(extracted, candidate.record)
+      return {
+        record: toRecordDto(candidate.record),
+        score: candidate.score,
+        gstinMatch: candidate.gstinMatch,
+        ...merged,
+      }
+    })
+
+    return {
+      /**
+       * THE NAME SURVIVES; the other four do not.
+       *
+       * The four that decide what prints and what tax applies — address,
+       * attention, GSTIN, ship-to state — stay blank because they differ
+       * between the candidates and choosing one is the whole question. The name
+       * does not have that problem: it is simply what the thread said, it is
+       * what the chooser has to ask its question with ("5 customers could be
+       * Morgan Stanley"), and it is what a desk who answers "none of these"
+       * should find already in the box rather than having to retype.
+       *
+       * It is not an identity and cannot be mistaken for one: a save carrying
+       * it without a chosen ledger is refused by requireCustomerChoice.
+       */
+      customer: { name: thread.name, address: '', attention: '', gstin: '', state: '' },
+      customerConfidence: extracted.confidence,
+      customerFrom: 'on-file',
+      // Nothing is missing. It is unchosen, which is a different thing, and
+      // listing five fields as absent would read as a failed read.
+      customerMissing: [],
+      customerConflicts: [],
+      customerNote: [chooseNote(offered, extracted.name), droppedThread]
+        .filter((n): n is string => n !== undefined)
+        .join(' '),
+      customerCandidates: offered,
+    }
+  }
+
+  const customerMissing = FIELDS.filter((field) => thread[field] === '').map(
+    (field) => FIELD_LABELS[field],
+  )
+
+  return {
+    customer: thread,
     // The model's own confidence, unchanged. It grades how clearly the thread
     // identified a customer; raising it because a record happened to be found
     // would be us inventing a number nobody measured.
     customerConfidence: extracted.confidence,
-    customerFrom,
+    customerFrom: 'thread',
     customerMissing,
-    customerConflicts: [...conflicts.thread, ...conflicts['on-file']],
-    customerNote: notes.length > 0 ? notes.join(' ') : undefined,
+    customerConflicts: [],
+    ...(droppedThread !== undefined ? { customerNote: droppedThread } : {}),
+    customerCandidates: [],
   }
+}
+
+/** The wire shape of a ledger. Kept beside the merge so the two cannot drift. */
+function toRecordDto(record: CustomerRecord): CustomerCandidate['record'] {
+  return {
+    id: record.id,
+    name: record.name,
+    address: record.address,
+    attention: record.attention,
+    gstin: record.gstin,
+    state: record.state,
+    contact: record.contact,
+    email: record.email,
+    country: record.country,
+    regType: record.regType,
+    source: record.source,
+    quoteCount: record.quoteCount,
+    lastUsedAt: record.lastUsedAt,
+  }
+}
+
+/**
+ * Says how many and WHY it cannot decide, rather than "please select a
+ * customer". The desk is about to be shown several rows that look nearly
+ * identical, and the sentence's job is to tell them what actually separates
+ * those rows before they start reading.
+ */
+function chooseNote(candidates: CustomerCandidate[], readName: string): string {
+  const named = readName.trim() === '' ? 'this thread' : `"${readName.trim()}"`
+
+  if (candidates.length === 1) {
+    return `One customer on your list looks like ${named}. Check it is the right one and choose it — nothing has been filled in yet.`
+  }
+
+  const registrations = new Set(candidates.map((c) => c.record.gstin).filter((g) => g !== ''))
+  const states = new Set(candidates.map((c) => c.record.state).filter((s) => s !== ''))
+
+  const differ =
+    registrations.size > 1 && states.size > 1
+      ? ' They have different GSTINs and different ship-to states, so the tax split depends on which one you pick.'
+      : registrations.size > 1
+        ? ' They have different GSTINs.'
+        : ' They share a GSTIN, so the address is what separates them.'
+
+  return `${candidates.length} customers on your list could be ${named}.${differ} Choose one — nothing has been filled in yet.`
 }
 
 /**

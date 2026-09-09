@@ -24,6 +24,8 @@ const QUOTE: Quote = {
   id: 'pdf-test',
   ref: 'NCS/2026-27/Quotes/RG/900',
   revision: 0,
+  customerId: null,
+  queriesNumbers: '40668812/88',
   date: '2026-07-10',
   customer: {
     name: 'Morgan Stanley Advantage Services Pvt Ltd',
@@ -179,3 +181,69 @@ describe('how much of a page a quotation takes', () => {
     expect(text).toContain('Thanking you')
   }, 180_000)
 })
+
+/**
+ * The PDF has to be EDITABLE, in Acrobat and in everything else.
+ *
+ * The desk asked for it and it is not a given: Word's ExportAsFixedFormat
+ * defaults BitmapMissingFonts to TRUE, which means "if a font cannot be
+ * embedded, draw that text as a picture". A quotation that comes out that way
+ * has no text at all — nothing to select, search, copy or edit — and there is
+ * no error to notice, because the export succeeds. It would happen only for the
+ * customers whose document used the wrong glyph, which is the worst way for a
+ * fault like this to be distributed.
+ *
+ * So this asserts the properties that make the file editable rather than the
+ * flag that produces them: real extractable text, no encryption dictionary of
+ * any kind, and embedded fonts.
+ */
+describe.skipIf(!hasConverter)('the PDF is editable, not a picture of a quotation', () => {
+  it('carries the whole document as real text', async () => {
+    const pdf = await docxToPdf(renderDocx(QUOTE))
+    const text = (await pdfText(pdf)).replace(/\s+/g, ' ')
+
+    // If any of these came back as a bitmap there would be no text to find.
+    expect(text).toContain('Quotation')
+    expect(text).toContain('Morgan Stanley Advantage Services Pvt Ltd')
+    expect(text).toContain('NCS/2026-27/Quotes/RG/900')
+    expect(text).toContain('Black i USB-C to USB-A 1.5 mtr')
+    expect(text).toContain('GST 18%')
+    expect(text).toContain('Rakhi Gupte')
+    expect(text.length).toBeGreaterThan(800)
+  }, 180_000)
+
+  it('is not encrypted, so no editor has to ask for a password or refuse', async () => {
+    // Word does not encrypt unless asked, and nothing here asks. Asserted
+    // because an /Encrypt dictionary is also how permissions are expressed —
+    // "printing allowed, editing not" is an encrypted PDF with an empty user
+    // password, and it opens perfectly right up until somebody tries to change
+    // a figure.
+    const pdf = await docxToPdf(renderDocx(QUOTE))
+    expect(pdf.toString('latin1')).not.toContain('/Encrypt')
+  }, 180_000)
+
+  it('embeds the fonts it uses', async () => {
+    // An editor that has to substitute a font it cannot find re-flows the
+    // document while you edit it. Word subsets on export and gives no way to
+    // stop it — the faces come out as BCDEEE+TimesNewRomanPSMT — which is fine
+    // for Times New Roman and Arial, the two the letterhead uses, because every
+    // machine already has them. What must not happen is no embedding at all.
+    const raw = (await docxToPdf(renderDocx(QUOTE))).toString('latin1')
+    expect(raw).toMatch(/\/FontFile[23]/)
+  }, 180_000)
+})
+
+/** The text of every page, joined. */
+async function pdfText(pdf: Buffer): Promise<string> {
+  const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs')
+  const doc = await getDocument({ data: new Uint8Array(pdf), useSystemFonts: true }).promise
+
+  const pages: string[] = []
+  for (let n = 1; n <= doc.numPages; n++) {
+    const content = await doc.getPage(n).then((page) => page.getTextContent())
+    pages.push(
+      content.items.map((item) => ('str' in item ? item.str : '')).join(' '),
+    )
+  }
+  return pages.join('\n')
+}

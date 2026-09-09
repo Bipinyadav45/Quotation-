@@ -1,10 +1,9 @@
 import { useState } from 'react'
-import type { Quote, QuoteItem, ResolvedCustomer } from '@shared/schema'
+import type { CustomerCandidate, Quote, QuoteItem, ResolvedCustomer } from '@shared/schema'
 import { hoistWarranty, itemsFromLines } from './lib/draft'
 import { DEFAULT_SALESPERSON, DEFAULT_TERMS, GST_RATE_PERCENT } from '@shared/company'
 import { endOfMonth, formatDateLong, toISODate } from '@shared/fy'
 import { formatPaise } from '@shared/money'
-import { taxModeForState } from '@shared/states'
 import Source, { type ReadResult } from './pages/Source'
 import QuoteEditor, { type EditorItem, type QuoteDraft } from './pages/QuoteEditor'
 import Stepper from './components/Stepper'
@@ -51,6 +50,8 @@ function newDraft(
   customer?: ResolvedCustomer | null,
   validity?: string | null,
   warranty?: string | null,
+  candidates: CustomerCandidate[] = [],
+  customerId: string | null = null,
 ): QuoteDraft {
   const today = new Date()
   const filled = customer ?? { name: '', address: '', attention: '', gstin: '', state: '' }
@@ -59,11 +60,29 @@ function newDraft(
     date: toISODate(today),
     initials: DEFAULT_SALESPERSON.initials,
     customer: filled,
+    customerId,
+    /**
+     * Non-empty means `filled` above is all blanks ON PURPOSE — the read found
+     * several ledgers this thread could mean and refused to guess between them.
+     * The editor shows the chooser and blocks the save until one is picked.
+     */
+    customerCandidates: candidates,
     contact: DEFAULT_SALESPERSON.phone,
     email: DEFAULT_SALESPERSON.email,
     signatory: DEFAULT_SALESPERSON.name,
+    queriesNumbers: DEFAULT_SALESPERSON.queriesNumbers,
     items: items.map(toEditorItem),
-    tax: { mode: taxModeForState(filled.state || undefined), rate: GST_RATE_PERCENT },
+    /**
+     * ONE GST ROW, ALWAYS, at the desk's instruction.
+     *
+     * This used to read the ship-to state and quote CGST + SGST for a
+     * Maharashtra customer and IGST for anyone else. Both of the documents the
+     * desk supplied as correct carry a single "GST 18%" row regardless, and
+     * that is what the letterhead says — see the note beside GST_RATE_PERCENT.
+     * computeTotals still knows how to split it, and a quotation saved before
+     * today still renders with whatever it was saved with.
+     */
+    tax: { mode: 'IGST', rate: GST_RATE_PERCENT },
     terms: {
       ...DEFAULT_TERMS,
       // What WE told this customer in the thread beats the end of the month.
@@ -93,9 +112,28 @@ function draftFromQuote(quote: Quote, asRevision: boolean): QuoteDraft {
       gstin: quote.customer.gstin ?? '',
       state: quote.customer.state ?? '',
     },
+    /**
+     * Carried, not re-derived. This quotation already recorded which ledger it
+     * went to, and re-matching the name would put the question back to a
+     * matcher that cannot answer it — the whole reason the id is stored.
+     *
+     * Null for a quotation saved before 004, and for one deliberately off the
+     * list. Both are then treated as an unchosen customer, so a revision of an
+     * old Morgan Stanley quotation asks which Morgan Stanley once, rather than
+     * inheriting an answer nobody ever gave.
+     */
+    customerId: quote.customerId,
+    customerCandidates: [],
     contact: quote.contact,
     email: quote.email,
     signatory: quote.signatory,
+    /**
+     * Carried from the record, blank included. A quotation saved before 005 has
+     * none, and the renderer falls that back to the initials in its reference —
+     * so a revision of one keeps the closing the original was sent with rather
+     * than adopting whoever is at the desk today.
+     */
+    queriesNumbers: quote.queriesNumbers,
     items: quote.items.map(toEditorItem),
     tax: quote.tax,
     terms: quote.terms,
@@ -121,6 +159,21 @@ function customerWarnings(result: ReadResult): string[] {
       result.customerNote ??
         'The customer could not be read from this thread. Type the details in below.',
     ]
+  }
+
+  /**
+   * Ledgers to choose between: the chooser is on screen, and it says all of
+   * this better than a warning strip can — it can show the addresses that are
+   * the actual difference between the rows.
+   *
+   * Everything below would be WRONG here, not merely redundant. Nothing was
+   * filled in, so "no customer details could be taken from this thread" would
+   * report a read that worked as a read that failed, and "not in the thread and
+   * not on file" would list five fields as missing when they are unchosen. The
+   * only thing worth carrying up is a note about a value a guard threw away.
+   */
+  if (result.customerCandidates && result.customerCandidates.length > 0) {
+    return result.customerNote ? [result.customerNote] : []
   }
 
   const out: string[] = []
@@ -328,13 +381,24 @@ export default function App() {
                 ...customerWarnings(result),
               ])
 
-              if (result.customer) setLastCustomer(result.customer)
+              const candidates = result.customerCandidates ?? []
+              // A read that produced a shortlist has decided nothing, so there
+              // is nothing to carry forward as "the customer we last resolved"
+              // — and remembering blanks would wipe one that HAD been resolved.
+              if (result.customer && candidates.length === 0) setLastCustomer(result.customer)
+
               setDraft(
                 newDraft(
                   quoted,
-                  result.customer ?? lastCustomer,
+                  // With a shortlist on screen the four deciding fields are
+                  // already blank in what came back, and must not be
+                  // back-filled from the previous read: the point is that this
+                  // thread's customer is unanswered. The name is there, being
+                  // what the thread said rather than a choice about who it was.
+                  candidates.length > 0 ? result.customer : (result.customer ?? lastCustomer),
                   result.suggestedValidity,
                   warranty,
+                  candidates,
                 ),
               )
               setSaved(null)

@@ -205,8 +205,51 @@ try {
     [ref]$true,    # ReadOnly
     [ref]$false    # AddToRecentFiles
   )
-  # 17 = wdExportFormatPDF
-  $doc.ExportAsFixedFormat(${psString(outputPath)}, 17)
+
+  # THE PDF HAS TO BE EDITABLE, in Acrobat and in everything else.
+  #
+  # Positional arguments, because PowerShell cannot pass named ones to a COM
+  # method and the two that matter are twelfth and thirteenth. In order:
+  #   OutputFileName, ExportFormat 17 = wdExportFormatPDF, OpenAfterExport,
+  #   OptimizeFor 0 = print quality, Range 0 = whole document, From, To,
+  #   Item 0 = content, IncludeDocProps, KeepIRM, CreateBookmarks 0 = none,
+  #   DocStructureTags, BitmapMissingFonts, UseISO19005_1.
+  #
+  # BITMAPMISSINGFONTS $false IS THE ONE THAT MUST NEVER BE FLIPPED BACK. Its
+  # default is TRUE, and it means "if a font cannot be embedded, draw that text
+  # as a picture instead". That produces a PDF nobody can edit or search — no
+  # error, no warning, and only for the quotations that happen to use a font
+  # Word could not embed. False makes Word substitute a face it CAN embed, so
+  # the output is always text. The export is otherwise left on its defaults.
+  #
+  # DocStructureTags $true keeps the tag tree that tells an editor which runs
+  # are paragraphs and which are table cells; without it Acrobat sees a page of
+  # loose text and reflowing an edited line is guesswork.
+  #
+  # WHAT IS NOT HERE, having been tried and measured: Word subsets embedded
+  # fonts on PDF export and gives no way to stop it. SaveSubsetFonts = false
+  # and EmbedTrueTypeFonts = true are DOCX-save settings and changed nothing
+  # in the output — the faces still came out as BCDEEE+TimesNewRomanPSMT. That
+  # is fine and not worth chasing: the document is Times New Roman and Arial,
+  # which every editor on every machine already has, so a subset resolves
+  # against the local copy. A subset only bites for a face the editing machine
+  # does not own, and the letterhead uses none.
+  $doc.ExportAsFixedFormat(
+    ${psString(outputPath)},
+    17,
+    $false,
+    0,
+    0,
+    1,
+    1,
+    0,
+    $true,
+    $true,
+    0,
+    $true,
+    $false,
+    $false
+  )
 } finally {
   if ($doc)  { try { $doc.Close([ref]$false) } catch {} }
   if ($word) { try { $word.Quit() } catch {} }

@@ -15,6 +15,13 @@ export interface DocumentData {
   contact: string
   email: string
   signatory: string
+  /**
+   * The closing line's numbers, which belong to the salesperson rather than to
+   * the company — see SALESPEOPLE. Here rather than read from COMPANY because
+   * this file mirrors the template paragraph for paragraph, and the template
+   * takes it as a tag.
+   */
+  queriesNumbers: string
   items: Array<{ desc: string; qty: number; rate: number }>
   tax: { mode: 'IGST' | 'CGST+SGST'; rate: number }
   /**
@@ -243,9 +250,9 @@ export default function DocumentPreview({ data, pendingRef, editableSeq }: Props
       </table>
 
       <p>Dear Sir,</p>
-      <p>Please find the following Proforma Invoice for your kind consideration: -</p>
+      <p>Please find the following Quotation for your kind consideration: -</p>
       {/* Heading5 in the letterhead: centred, bold, underlined. */}
-      <p className="my-2 text-center font-bold underline">Proforma Invoice</p>
+      <p className="my-2 text-center font-bold underline">Quotation</p>
 
       <table className="w-full table-fixed border border-ink/30 text-[11.5px]">
         <thead>
@@ -366,7 +373,7 @@ export default function DocumentPreview({ data, pendingRef, editableSeq }: Props
         </div>
 
         <p className="mt-3">
-          If you have any queries, please feel free to call us at {COMPANY.queriesNumbers}
+          If you have any queries, please feel free to call us at {data.queriesNumbers}
         </p>
         <p>Looking forward to an encouraging and early response.</p>
         <p className="mt-3">Thanking you,</p>

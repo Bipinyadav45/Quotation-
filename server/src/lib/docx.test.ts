@@ -3,7 +3,12 @@ import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Quote } from '@shared/schema.js'
-import { COMPANY, gstinLine } from '@shared/company.js'
+import {
+  COMPANY,
+  DEFAULT_SALESPERSON,
+  gstinLine,
+  SALESPEOPLE,
+} from '@shared/company.js'
 import { ROOT } from '../config.js'
 import { buildRenderModel, documentFilename, renderDocx } from './docx.js'
 
@@ -83,6 +88,8 @@ const QUOTE: Quote = {
   id: 'test',
   ref: 'NCS/2026-27/Quotes/RG/030',
   revision: 0,
+  customerId: null,
+  queriesNumbers: '40668812/88',
   date: '2026-07-10',
   customer: {
     name: 'Morgan Stanley Advantage Services Pvt Ltd',
@@ -494,34 +501,35 @@ describe('against the quotation Newtech actually sent', () => {
   })
 
   /**
-   * The document is a Proforma Invoice now and the reference file is a
-   * quotation, so two lines are SUPPOSED to differ.
+   * The document says "Quotation", in both places, exactly as the reference
+   * document does.
    *
-   * Asserted as pairs rather than deleted from the list above, because deleting
-   * them would mean a later accidental revert to "Quotation" passed silently —
-   * the one thing this test exists to catch.
+   * It said "Proforma Invoice" for a while and was changed back on the desk's
+   * instruction. This is asserted rather than left to the list above — which
+   * already checks both strings appear in both files — because the interesting
+   * failure is the opposite one: a document that has drifted BACK to calling
+   * itself a proforma invoice while the letterhead it is copied from does not.
    */
-  it('says Proforma Invoice where the reference said Quotation, and only there', () => {
+  it('calls itself a Quotation, in the same two places the reference does', () => {
     const original = extractText(readFileSync(SAMPLE_DOCX)).replace(/\s+/g, ' ')
     const ours = extractText(renderDocx(QUOTE)).replace(/\s+/g, ' ')
 
-    const renamed = [
-      {
-        was: 'Please find the following Quotation for your kind consideration: -',
-        now: 'Please find the following Proforma Invoice for your kind consideration: -',
-      },
+    const both = [
+      'Please find the following Quotation for your kind consideration: -',
       // The centred, bold, underlined heading.
-      { was: 'Quotation', now: 'Proforma Invoice' },
+      'Quotation',
     ]
 
-    for (const { was, now } of renamed) {
-      expect(original, `the reference document should still say "${was}"`).toContain(was)
-      expect(ours, `ours should say "${now}"`).toContain(now)
+    for (const line of both) {
+      expect(original, `the reference document should say "${line}"`).toContain(line)
+      expect(ours, `ours should say "${line}"`).toContain(line)
     }
 
-    // The rename is confined to those two lines: nothing else in our document
-    // still calls itself a quotation.
-    expect(ours).not.toMatch(/\bQuotation\b/)
+    // Nothing anywhere still calls it a proforma invoice — not the heading, not
+    // the sentence above it, and not the Prices term, which pointed at "this
+    // proforma invoice" while the heading said so.
+    expect(ours).not.toMatch(/proforma/i)
+
     // ...and the reference series is untouched, because it is an identifier.
     expect(ours).toContain('NCS/2026-27/Quotes/RG/030')
   })
@@ -610,16 +618,94 @@ describe('renderDocx — the fifth term', () => {
 
 describe('documentFilename — §8', () => {
   it('uses the customer first word and the date', () => {
-    expect(documentFilename(QUOTE, 'docx')).toBe('ProformaInvoice-Morgan-2026-07-10.docx')
-    expect(documentFilename(QUOTE, 'pdf')).toBe('ProformaInvoice-Morgan-2026-07-10.pdf')
+    expect(documentFilename(QUOTE, 'docx')).toBe('Quotation-Morgan-2026-07-10.docx')
+    expect(documentFilename(QUOTE, 'pdf')).toBe('Quotation-Morgan-2026-07-10.pdf')
   })
 
   it('marks revisions and survives punctuation in the customer name', () => {
     expect(documentFilename({ ...QUOTE, revision: 2 }, 'docx')).toBe(
-      'ProformaInvoice-Morgan-2026-07-10-Rev2.docx',
+      'Quotation-Morgan-2026-07-10-Rev2.docx',
     )
     expect(
       documentFilename({ ...QUOTE, customer: { ...QUOTE.customer, name: 'L&T / Infotech' } }, 'docx'),
-    ).toBe('ProformaInvoice-LT-2026-07-10.docx')
+    ).toBe('Quotation-LT-2026-07-10.docx')
+  })
+})
+
+/**
+ * Two people sign these documents, and every line that names one of them has to
+ * be theirs.
+ *
+ * The reference series, the signature, the contact number and email in the From
+ * block, and the "call us at" numbers in the closing. The last is the one that
+ * looks like a company constant and is not — it was one, hard-coded into the
+ * template at build time, and it printed Rakhi Gupte's numbers under Linda
+ * D'mello's name. Both of the desk's own documents are in the repository
+ * disagreeing about it.
+ */
+describe('whose quotation this is', () => {
+  const from = (person: (typeof SALESPEOPLE)[number], ref: string): Quote => ({
+    ...QUOTE,
+    ref,
+    contact: person.phone,
+    email: person.email,
+    signatory: person.name,
+    queriesNumbers: person.queriesNumbers,
+  })
+
+  const rakhi = SALESPEOPLE.find((p) => p.initials === 'RG')!
+  const linda = SALESPEOPLE.find((p) => p.initials === 'LD')!
+
+  it('prints each salesperson their own four lines', () => {
+    for (const [person, ref] of [
+      [rakhi, 'NCS/2026-27/Quotes/RG/030'],
+      [linda, 'NCS/2026-27/Quotes/LD/034'],
+    ] as const) {
+      const text = extractText(renderDocx(from(person, ref))).replace(/\s+/g, ' ')
+
+      expect(text).toContain(ref)
+      expect(text).toContain(person.phone)
+      expect(text).toContain(person.email)
+      expect(text).toContain(person.name)
+      expect(text).toContain(`call us at ${person.queriesNumbers}`)
+    }
+  })
+
+  it("never leaves one person's numbers under the other's name", () => {
+    // The bug the tag replaced. Rendering Linda's quotation used to print
+    // "call us at 40668812/88" because the template carried it as a literal.
+    const text = extractText(renderDocx(from(linda, 'NCS/2026-27/Quotes/LD/034')))
+    expect(text).not.toContain(rakhi.queriesNumbers)
+    expect(text).not.toContain(rakhi.email)
+    expect(text).not.toContain(rakhi.name)
+  })
+
+  it('keeps the typographic apostrophe in a name that has one', () => {
+    // "Linda D'mello" as the quotation she sent spells it — a right single
+    // quote, not an ASCII one. It goes through docxtemplater and out to XML,
+    // where a mangled character would be visible on the customer's copy.
+    const text = extractText(renderDocx(from(linda, 'NCS/2026-27/Quotes/LD/034')))
+    expect(text).toContain('Linda D\u2019mello')
+  })
+
+  it('falls a quotation saved before 005 back to the initials in its reference', () => {
+    // Those rows have a blank queriesNumbers, and the closing still has to
+    // print the numbers the document was actually sent with. The reference is
+    // the only thing left that says who wrote it.
+    const text = extractText(
+      renderDocx({ ...from(linda, 'NCS/2026-27/Quotes/LD/034'), queriesNumbers: '' }),
+    ).replace(/\s+/g, ' ')
+
+    expect(text).toContain(`call us at ${linda.queriesNumbers}`)
+  })
+
+  it('falls back once more when the initials belong to nobody on the list', () => {
+    // A salesperson who has left. Better the desk's default numbers than "call
+    // us at" with nothing after it on a document going to a customer.
+    const text = extractText(
+      renderDocx({ ...from(linda, 'NCS/2026-27/Quotes/ZZ/001'), queriesNumbers: '' }),
+    ).replace(/\s+/g, ' ')
+
+    expect(text).toContain(`call us at ${DEFAULT_SALESPERSON.queriesNumbers}`)
   })
 })

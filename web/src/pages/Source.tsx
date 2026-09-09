@@ -1,5 +1,11 @@
 import { useState } from 'react'
-import type { AiReadResponse, ParsedLine, ParseResponse, ResolvedCustomer } from '@shared/schema'
+import type {
+  AiReadResponse,
+  CustomerCandidate,
+  ParsedLine,
+  ParseResponse,
+  ResolvedCustomer,
+} from '@shared/schema'
 import { SAMPLE_THREAD } from '@shared/sample'
 import { ApiError, apiPost, useApi } from '../lib/api'
 import Callout from '../components/Callout'
@@ -27,6 +33,11 @@ export interface ReadResult {
   /** Fields where the thread disagreed with the customer list and lost. */
   customerConflicts?: string[]
   customerNote?: string
+  /**
+   * Ledgers the thread could mean. Non-empty means nothing was filled in and a
+   * person has to choose — see AiReadResponseSchema.
+   */
+  customerCandidates?: CustomerCandidate[]
   /** Term 4, when WE stated one in the thread. Computed server-side. */
   suggestedValidity?: string
 }
@@ -81,6 +92,7 @@ export default function Source({ thread, onThreadChange, onRead }: Props) {
           customerMissing: r.customerMissing ?? [],
           customerConflicts: r.customerConflicts ?? [],
           customerNote: r.customerNote,
+          customerCandidates: r.customerCandidates ?? [],
           suggestedValidity: r.suggestedValidity,
         },
         thread,

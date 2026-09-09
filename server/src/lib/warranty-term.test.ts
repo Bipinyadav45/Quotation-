@@ -24,6 +24,8 @@ const QUOTE: Quote = {
   id: 'warranty-seam',
   ref: 'NCS/2026-27/Quotes/RG/019',
   revision: 0,
+  customerId: null,
+  queriesNumbers: '40668812/88',
   date: '2026-08-21',
   customer: {
     name: 'Datamatics Global Services Limited',
@@ -39,7 +41,7 @@ const QUOTE: Quote = {
   terms: {
     payment: '100% Advance',
     delivery: '1-2 Weeks after PO',
-    prices: 'All-inclusive as per this proforma invoice',
+    prices: 'All-inclusive as per this quotation',
     validity: '31st August 2026.',
     warranty: '',
   },
