@@ -21,14 +21,16 @@ used only for typechecking.
 ## The five rules
 
 **1. Money is stored and compared only as integer paise.**
-A division may appear **only** where its result is immediately floored or rounded back to an
-integer — `shared/money.ts` does exactly that at lines 53, 66, 92, 112, 158 and 172, and every
-one of them is correct. Never store, compare, sum or round-trip a fractional rupee. A quotation
-one paisa out is one the customer's system rejects. `shared/` has the helpers — use them.
+Never store, compare, sum or round-trip a fractional rupee. A division is fine where its result
+is immediately floored or rounded back to an integer, and `shared/money.ts` does that correctly
+throughout — five sites divide by `100` (lines 53, 66, 112, 158, 172), one by `100_000` for lakh
+formatting (line 92), and line 157's `ratePercent / 2` is a percentage, not money. A quotation one
+paisa out is one the customer's system rejects. `shared/` has the helpers — use them.
 
-*(An earlier version of this rule said "never a division by 100". That was wrong: it banned the
-correct code in `money.ts`. A rule that forbids what the codebase already does correctly gets
-switched off, and then it protects nothing.)*
+*(This rule has now been wrong twice. It first said "never a division by 100", which banned the
+correct code in `money.ts`. The correction then listed line 92 among the `/ 100` sites, which it
+is not. Both errors point the same way: the invariant is about what is **stored**, not about which
+operator appears. Judge the value, not the character.)*
 
 **2. A customer is a ledger, not a name.**
 Fourteen ledgers are spelled some version of "Datamatics Global Services Limited";
@@ -47,7 +49,7 @@ down-migrations; rolling back means restoring a backup.
 frontend for key-shaped strings and will fail the build if one leaks.
 
 **5. Tests must pass before anything is pushed.**
-`npm test` — all 444. `main` is protected and CI blocks the merge anyway, but finding
+`npm test` — all 447. `main` is protected and CI blocks the merge anyway, but finding
 out locally is faster.
 
 ## Two things that differ between machines — this has already caused bugs
@@ -104,7 +106,7 @@ Linux container**, against LibreOffice, not on the developer's Windows machine.
 | Command | What it does |
 |---|---|
 | `npm run dev` | Server + Vite together, http://localhost:5173 |
-| `npm test` | The whole suite (444 tests) |
+| `npm test` | The whole suite (447 tests) |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run migrate -- --check` | Report pending migrations, change nothing |
 | `npm run backup` | Safe DB snapshot (**uses `VACUUM INTO` — never copy the .db file**) |
