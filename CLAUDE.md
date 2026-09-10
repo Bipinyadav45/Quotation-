@@ -20,9 +20,15 @@ used only for typechecking.
 
 ## The five rules
 
-**1. Money is integer paise. Always.**
-Never a float, never a division by 100 in floating point. A quotation one paisa out is
-one the customer's system rejects. `shared/` has the helpers — use them.
+**1. Money is stored and compared only as integer paise.**
+A division may appear **only** where its result is immediately floored or rounded back to an
+integer — `shared/money.ts` does exactly that at lines 53, 66, 92, 112, 158 and 172, and every
+one of them is correct. Never store, compare, sum or round-trip a fractional rupee. A quotation
+one paisa out is one the customer's system rejects. `shared/` has the helpers — use them.
+
+*(An earlier version of this rule said "never a division by 100". That was wrong: it banned the
+correct code in `money.ts`. A rule that forbids what the codebase already does correctly gets
+switched off, and then it protects nothing.)*
 
 **2. A customer is a ledger, not a name.**
 Fourteen ledgers are spelled some version of "Datamatics Global Services Limited";
@@ -115,6 +121,23 @@ nothing. Use `npm run backup`.
   LibreOffice.
 - If you changed the schema, say a migration was added and that it is forward-only.
 - Do not describe a change as verified when you have only read the code.
+
+## The full framework
+
+These five rules are the minimum. The complete operating framework — sprints, the Definition of
+Done, the test ladder, the pipeline, deployment and rollback, security gates, and the binding
+rules for AI agents — is in **[`docs/sdlc/`](docs/sdlc/README.md)**.
+
+Read [`docs/sdlc/02-ai-rules.md`](docs/sdlc/02-ai-rules.md) before doing anything substantial. It
+carries the stop-list: what you must never do without explicit approval.
+
+Two things it is honest about, which affect how you should behave:
+
+- **Nothing checks most of this.** GitLab Free cannot require approvals. `main` is protected so a
+  *developer* cannot merge their own work — but a *maintainer* can, and can resolve their own
+  review threads. If you are working with a maintainer, the review is a courtesy, not a gate.
+- **Most of the process is not running yet.** Issues are unused, there are no sprints, production
+  is not deployed. Rules marked "From Sprint 1" are not in force. Do not cite them as if they were.
 
 ## Where the reasoning lives
 
