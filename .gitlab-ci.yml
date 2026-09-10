@@ -121,18 +121,42 @@ deploy:qa:
     - EXPECTED=$(docker inspect --format='{{.Id}}' "$IMAGE_DIGEST")
     - test "$RUNNING" = "$EXPECTED" || { echo "DIGEST MISMATCH - aborting"; exit 1; }
 
-    # The app retries EADDRINUSE for 5s at boot, so do not judge it immediately.
+    # Wait on the container's OWN healthcheck, defined in the Dockerfile.
+    #
+    # The obvious `curl http://127.0.0.1:8081/api/health` from here is wrong
+    # twice over, and the first run proved both: this job runs in its own
+    # container, so 127.0.0.1 is the JOB, not the host that publishes 8081 --
+    # and docker:29-cli ships no curl anyway, so the loop just printed
+    # "curl: not found" thirty times and then failed the grep.
     - |
-      for i in $(seq 1 30); do
-        if curl -fsS http://127.0.0.1:8081/api/health > /tmp/health.json; then break; fi
-        sleep 2
+      for i in $(seq 1 45); do
+        H=$(docker inspect --format '{{.State.Health.Status}}' quotation-qa 2>/dev/null || echo missing)
+        [ "$H" = "healthy" ] && break
+        if [ "$H" = "unhealthy" ]; then
+          echo "container reported unhealthy"; docker logs --tail 40 quotation-qa; exit 1
+        fi
+        sleep 4
       done
-      cat /tmp/health.json
-    # /api/health returns 200 for "degraded" on purpose, so that a missing PDF
-    # converter does not take the container down. A status check alone would
-    # therefore pass with the renderer broken -- assert on the body instead.
-    - grep -q '"status":"ok"' /tmp/health.json || { echo "health not ok"; exit 1; }
-    - grep -q '"database":{"ok":true' /tmp/health.json || { echo "database not ok"; exit 1; }
+      if [ "$H" != "healthy" ]; then
+        echo "timed out waiting for health (last state: $H)"; docker logs --tail 40 quotation-qa; exit 1
+      fi
+
+    # Docker's healthcheck passes on "degraded" on purpose, so that a missing
+    # PDF converter does not take the container down. Assert the stronger
+    # condition by reading the body -- from INSIDE the container, using the
+    # node that is already there.
+    - |
+      docker exec quotation-qa node -e "
+        fetch('http://127.0.0.1:4000/api/health')
+          .then(r => r.json())
+          .then(j => {
+            console.log(JSON.stringify(j));
+            if (j.status !== 'ok') { console.error('status is ' + j.status); process.exit(1); }
+            if (!j.checks.database.ok) { console.error('database not ok'); process.exit(1); }
+            if (!j.checks.pdf.ok) { console.error('pdf converter not ok'); process.exit(1); }
+          })
+          .catch(e => { console.error(e.message); process.exit(1); });
+      "
 
 # ---------------------------------------------------------------------------
 # Production is deliberately absent.
