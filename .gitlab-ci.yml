@@ -91,13 +91,18 @@ deploy:qa:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   environment:
     name: qa
-    url: http://192.168.3.249:8081
+    url: http://192.168.1.40:8081
   variables:
     # A named volume, so redeploying never touches QA's data. Deliberately not a
     # G:\ bind mount: SQLite file locking is unreliable across Docker Desktop's
     # Windows path translation, and this database runs in WAL mode.
     QA_VOLUME: quotation_qa_data
   script:
+    # Each job runs in its own container, and `docker login` writes credentials
+    # to the CLIENT's filesystem -- not the daemon's. publish logged in, but
+    # those credentials died with that container, so this job must log in again
+    # or the pull comes back "access forbidden".
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
     - docker pull "$IMAGE_DIGEST"
     - docker rm -f quotation-qa || true
     - >
