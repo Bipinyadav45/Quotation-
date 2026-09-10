@@ -123,7 +123,7 @@ This is the authoritative role → permission map; other sections cite rows from
 | Run the monthly governance sweep (§2) | No | No | **Owner** | — |
 | Deploy to production | **Nobody. Production does not exist** | | | |
 
-**There are no CI/CD variables holding secrets, and nothing to hand out.** The pipeline authenticates to the registry with the predefined `$CI_REGISTRY_USER` / `$CI_REGISTRY_PASSWORD` job credentials, which expire with the job. `GEMINI_API_KEY` is **not** in CI — the whole 444-test suite runs without it; it lives only in each developer's local `.env`. If someone adds a CI variable, that changes and this row must change with it.
+**There are no CI/CD variables holding secrets, and nothing to hand out.** The pipeline authenticates to the registry with the predefined `$CI_REGISTRY_USER` / `$CI_REGISTRY_PASSWORD` job credentials, which expire with the job. `GEMINI_API_KEY` is **not** in CI — the whole 447-test suite runs without it; it lives only in each developer's local `.env`. If someone adds a CI variable, that changes and this row must change with it.
 
 **QA is only ever changed by `deploy:qa`.** The job re-pulls by `sha256` digest and then asserts the running container is that digest; `06-cicd.md` §1 owns the mechanics and why each step is written the way it is. The governance point is the one that outlives the mechanics: **a hand-started container breaks the promise twice** — until the next merge QA is answering with bytes nobody tested, and at the next merge `docker rm -f quotation-qa` deletes it and the hand-fix leaves no trace. Data survives (the named volume `quotation_qa_data`), which is worse, not better: a hand-edited row in QA's copy of the 225 real ledgers persists forever and no pipeline will ever correct it.
 

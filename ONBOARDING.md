@@ -193,7 +193,7 @@ git push -u origin feature/add-discount-column
 For step 5, the `git push` prints a link. Open it, add a title, and click
 **Create merge request**.
 
-**What happens next:** the server automatically builds your change and runs all 444
+**What happens next:** the server automatically builds your change and runs all 447
 tests. This takes a few minutes.
 
 - **Green tick** -> ready for someone to review and merge
@@ -223,7 +223,7 @@ user's behalf.
 npm test
 ```
 
-All 444 must pass. If you broke one, the server will catch it anyway — but finding out
+All 447 must pass. If you broke one, the server will catch it anyway — but finding out
 yourself is faster.
 
 **4. Never commit passwords or keys.** The `.env` file is already excluded from Git.

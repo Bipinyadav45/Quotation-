@@ -1,8 +1,8 @@
 ## Testing Strategy
 
-**Where we stand today.** 444 tests in 27 files, run by `npm test` (`vitest run`), `environment: 'node'`, `include: ['shared/**/*.test.ts', 'server/**/*.test.ts', 'web/**/*.test.ts']`. No jsdom, no testing-library, no browser driver; no React component is ever mounted. CI runs the suite inside the Dockerfile `test` stage (`node:22-bookworm-slim` + `libreoffice-writer` + `fonts-liberation`, `TZ=Asia/Kolkata`, `PDF_BACKEND=libreoffice`), never on a developer's Windows box — the developer has Word, QA and production have LibreOffice, and they are not the same renderer.
+**Where we stand today.** 447 tests in 28 files, run by `npm test` (`vitest run`), `environment: 'node'`, `include: ['shared/**/*.test.ts', 'server/**/*.test.ts', 'web/**/*.test.ts']`. No jsdom, no testing-library, no browser driver; no React component is ever mounted. CI runs the suite inside the Dockerfile `test` stage (`node:22-bookworm-slim` + `libreoffice-writer` + `fonts-liberation`, `TZ=Asia/Kolkata`, `PDF_BACKEND=libreoffice`), never on a developer's Windows box — the developer has Word, QA and production have LibreOffice, and they are not the same renderer.
 
-**Run `npm run build` before `npm test`.** On a fresh clone the suite is **red**, not green-with-skips: `web/bundle-safety.test.ts` ends with a non-conditional `expect(built).toBe(true)`. The 444 figure is the count with every gate open; only the **eight converter-gated tests** can vanish quietly (§9). There is no coverage tooling, no linter and no formatter in this repository, and none of the numbers below come from a coverage report.
+**Run `npm run build` before `npm test`.** On a fresh clone the suite is **red**, not green-with-skips: `web/bundle-safety.test.ts` ends with a non-conditional `expect(built).toBe(true)`. The 447 figure is the count with every gate open; only the **eight converter-gated tests** can vanish quietly (§9). There is no coverage tooling, no linter and no formatter in this repository, and none of the numbers below come from a coverage report.
 
 > `PROJECT-LOG.md` §6 records "122 tests across 11 files" and names `reconcile.test.ts`, `tokenize.test.ts`, `assign.test.ts`, `diff.test.ts`, none of which exist any more. Read §6 as a dated verification record, not as an inventory. This section is the inventory.
 
@@ -24,9 +24,9 @@ This is a reconciled section. Where a topic belongs to another section it is one
 
 ### 1. What a green pipeline proves, and what it does not
 
-CI runs **all 444 tests on every pipeline**. There is no diff-based selection and none is planned.
+CI runs **all 447 tests on every pipeline**. There is no diff-based selection and none is planned.
 
-> **A feature with zero tests passes green.** CI proves you did not break the 444 things already asserted. It cannot prove your new thing works.
+> **A feature with zero tests passes green.** CI proves you did not break the 447 things already asserted. It cannot prove your new thing works.
 
 Two paid-for examples of the gap:
 
