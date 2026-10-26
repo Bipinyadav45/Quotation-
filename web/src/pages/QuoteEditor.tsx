@@ -5,6 +5,7 @@ import { formatDateLong, fromISODate } from '@shared/fy'
 import { INDIAN_STATES } from '@shared/states'
 import { GST_RATE_PERCENT, SALESPEOPLE } from '@shared/company'
 import { apiDownload, ApiError, apiPost, apiPut, useApi } from '../lib/api'
+import { newRowKey } from '../lib/rowKey'
 import Callout from '../components/Callout'
 import CoveringEmail from '../components/CoveringEmail'
 import CustomerField from '../components/CustomerField'
@@ -895,7 +896,7 @@ export default function QuoteEditor({
                 items: [
                   ...draft.items,
                   {
-                    key: crypto.randomUUID(),
+                    key: newRowKey(),
                     desc: '',
                     make: '',
                     partCode: '',
