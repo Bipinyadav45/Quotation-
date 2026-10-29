@@ -42,8 +42,17 @@ build:
     # --target test keeps devDependencies and adds LibreOffice; --target runtime
     # is what ships. They share every layer up to `npm run build`, so building
     # both costs little more than building one.
+    #
+    # --provenance=false because GitLab's registry cannot take the provenance
+    # attestation the Docker on this runner now writes. After an update some time
+    # after 10 Sep 2026, BuildKit gives the attestation a `subject` pointing at
+    # the image manifest; the registry refuses a manifest whose subject it does
+    # not yet hold, so the push died with "blob unknown to registry" naming the
+    # image's own manifest. On 29 Oct QA was still running the 10 Sep image.
+    # Nothing here reads the attestation. Without it the image is one plain
+    # manifest, which is what the September image amounted to.
     - docker build --target test    -t "$IMAGE:$TEST_TAG"  .
-    - docker build --target runtime -t "$IMAGE:$BUILD_TAG" .
+    - docker build --target runtime --provenance=false -t "$IMAGE:$BUILD_TAG" .
     - docker image ls "$IMAGE"
 
 # ---------------------------------------------------------------------------
