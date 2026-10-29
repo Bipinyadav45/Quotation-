@@ -55,7 +55,7 @@ Verified against `.gitlab-ci.yml` at `f76a0d7`. Stages: `build → test → publ
 
 | Job | `needs:` | `rules:` | What it actually does |
 |---|---|---|---|
-| `build` | — | all refs | `docker build --target test` and `--target runtime` from one Dockerfile. Both share every layer up to `npm run build`, so the second build is nearly free. No `docker login` — nothing is pushed and the base image is `node:22-bookworm-slim` from Docker Hub. |
+| `build` | — | all refs | `docker build --target test` and `--target runtime --provenance=false` from one Dockerfile. Both share every layer up to `npm run build`, so the second build is nearly free. The runtime image carries no provenance attestation because the registry rejects the form the runner's BuildKit now writes — on 29 Oct 2026 publish was failing with "blob unknown to registry" and QA was still on the image built 10 Sep. The reasoning is on the line in `.gitlab-ci.yml`. No `docker login` — nothing is pushed and the base image is `node:22-bookworm-slim` from Docker Hub. |
 | `test` | `[build]` | all refs | `docker run --rm $IMAGE:test-$SHORT_SHA npm run typecheck`, then `npm test`. Inside the image, against LibreOffice. |
 | `publish` | `[test]` | `$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH` | First `docker login` of the pipeline, push `$IMAGE:$CI_COMMIT_SHA`, then `docker inspect --format='{{index .RepoDigests 0}}'` into `artifacts:reports:dotenv` as `IMAGE_DIGEST`. |
 | `deploy:qa` | `[publish]` | main only | Logs in **again** — `docker login` writes credentials to the *client* filesystem, and publish's died with its container; without this the pull returns "access forbidden". Pulls by digest, recreates `quotation-qa` (`--memory=2g --cpus=2.0 -p 8081:4000 -v quotation_qa_data:/app/data -e TZ=Asia/Kolkata`), asserts `docker inspect .Image` of the container equals `.Id` of the digest, polls `.State.Health.Status` for up to 180 s, then `docker exec … node -e "fetch('http://127.0.0.1:4000/api/health')"` and requires `status === 'ok'` **plus** `checks.database.ok` **plus** `checks.pdf.ok`. |
@@ -478,7 +478,7 @@ build:
   <<: *not-on-tags
   script:
     - docker build --target test    -t "$IMAGE:$TEST_TAG"  .
-    - docker build --target runtime -t "$IMAGE:$BUILD_TAG"
+    - docker build --target runtime --provenance=false -t "$IMAGE:$BUILD_TAG"
         --label org.opencontainers.image.revision=$CI_COMMIT_SHA .
 
 test:
