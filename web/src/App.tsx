@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { CustomerCandidate, Quote, QuoteItem, ResolvedCustomer } from '@shared/schema'
 import { hoistWarranty, itemsFromLines } from './lib/draft'
+import { newRowKey } from './lib/rowKey'
 import { DEFAULT_SALESPERSON, DEFAULT_TERMS, GST_RATE_PERCENT } from '@shared/company'
 import { endOfMonth, formatDateLong, toISODate } from '@shared/fy'
 import { formatPaise } from '@shared/money'
@@ -26,7 +27,7 @@ const FLOW: Array<{ screen: Screen; label: string; locked: string }> = [
 
 
 const toEditorItem = (item: QuoteItem): EditorItem => ({
-  key: crypto.randomUUID(),
+  key: newRowKey(),
   desc: item.desc,
   make: item.make,
   partCode: item.partCode,

@@ -101,7 +101,7 @@ healthcheck.
 `package.json`), no dependency or secret scanning job, no `.gitlab/` templates, no scheduled
 pipelines, no `resource_group` on `deploy:qa`, no production job, no rollback job, no pipeline
 notification. **CODEOWNERS is not on that list** — it is not a gap, it is a Premium feature that
-would do nothing if added (§2). 28 test files, 447 tests.
+would do nothing if added (§2). 29 test files, 450 tests.
 
 ### 2. Free tier: what we cannot buy our way around
 

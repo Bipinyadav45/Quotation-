@@ -118,7 +118,7 @@ Last line of the body, blank line before it. Countable before you push: `git log
 
 **Merge requests.** [reviewer] One line: `AI assistance: <what the agent did> / <what the human verified by running it>`. There is no `.gitlab/` directory and no MR template, so this line is typed by hand and is easy to forget. **01-agile.md** owns the template inventory that will eventually carry it as a checkbox [from Sprint 1].
 
-**Never claim you ran something you did not.** Run `npm run build && npm run typecheck && npm test` (447 tests, 28 files) and say so, or say plainly that you only read the code — and if your local run reports skipped tests, report the skip count too.
+**Never claim you ran something you did not.** Run `npm run build && npm run typecheck && npm test` (450 tests, 29 files) and say so, or say plainly that you only read the code — and if your local run reports skipped tests, report the skip count too.
 
 ### 7. Stop List — never, without explicit developer approval
 

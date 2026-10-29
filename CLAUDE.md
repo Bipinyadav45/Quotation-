@@ -49,7 +49,7 @@ down-migrations; rolling back means restoring a backup.
 frontend for key-shaped strings and will fail the build if one leaks.
 
 **5. Tests must pass before anything is pushed.**
-`npm test` — all 447. `main` is protected and CI blocks the merge anyway, but finding
+`npm test` — all 450. `main` is protected and CI blocks the merge anyway, but finding
 out locally is faster.
 
 ## Two things that differ between machines — this has already caused bugs
@@ -106,7 +106,7 @@ Linux container**, against LibreOffice, not on the developer's Windows machine.
 | Command | What it does |
 |---|---|
 | `npm run dev` | Server + Vite together, http://localhost:5173 |
-| `npm test` | The whole suite (447 tests) |
+| `npm test` | The whole suite (450 tests) |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run migrate -- --check` | Report pending migrations, change nothing |
 | `npm run backup` | Safe DB snapshot (**uses `VACUUM INTO` — never copy the .db file**) |
